@@ -276,7 +276,22 @@ If you're building from source, the project uses Apple Development certificate s
 
 ## Contributing
 
-Contributions are welcome! Please reach out via [GitHub Issues](https://github.com/mdebritto/home-rec/issues) or [Discussions](https://github.com/mdebritto/home-rec/discussions).
+Contributions are welcome! Please reach out via [GitHub Issues](https://github.com/melissa-pereira-deel/home-rec/issues) or [Discussions](https://github.com/melissa-pereira-deel/home-rec/discussions).
+
+### First-time setup
+
+After cloning, activate the project's git hooks:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This enables a `pre-commit` hook that blocks accidental commits of secrets
+(API keys, signing certs, `.env` files) and internal documents. Git config is
+not copied on clone, so this is a one-time step per checkout. To bypass it for a
+verified false positive: `git commit --no-verify`.
+
+### Guidelines
 
 1. Open an issue before starting major work
 2. Follow Swift conventions
