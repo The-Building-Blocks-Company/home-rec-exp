@@ -44,9 +44,27 @@ CLAUDE.md
 # Audio test files
 test_recordings/
 
-# Environment & secrets
+# ─── Product management / internal (NEVER publish) ───
+# All internal docs live under private/. The folder is the structural
+# guarantee: anything here physically cannot be committed.
+/private/
+BACKLOG.md
+docs/product-strategy/
+*.private.md
+
+# ─── Marketing artifacts (keep local, publish via website host) ───
+home-rec-website.html
+
+# ─── Environment & secrets (NEVER publish) ───
 .env
 .env.*
 *.pem
 *.p12
+*.cer
+*.p8
 *.key
+*_private_key*
+AuthKey_*.p8
+secrets.*
+notariz*.txt
+*appcast*.key

@@ -196,11 +196,6 @@ Home Rec/
 │   ├── AppIcon.icns                   # Compiled icon
 │   └── HomeRec.iconset/              # Generated icon sizes
 │
-├── docs/research/                     # Specs, feasibility, guides
-│   ├── SystemAudioRecorder_ProjectSpec.md
-│   ├── core_audio_taps_implementation_guide.md
-│   └── macos_audio_recorder_feasibility_analysis.md
-│
 └── HomeRec/                           # Xcode project
     ├── HomeRec.xcodeproj/
     ├── HomeRec/                        # Source code
