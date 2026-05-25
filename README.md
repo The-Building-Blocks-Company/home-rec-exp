@@ -221,7 +221,7 @@ Home Rec/
 ### Building from Source
 
 ```bash
-git clone https://github.com/mdebritto/home-rec.git
+git clone https://github.com/melissa-pereira-deel/home-rec.git
 cd home-rec/HomeRec
 open HomeRec.xcodeproj
 # Press Cmd+R in Xcode to build and run
