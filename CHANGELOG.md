@@ -10,10 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Stream-failure detection & recovery** — When the capture stream stops unexpectedly (permission revoked, display sleep, another capturer), the failure now propagates from `ScreenCaptureAudioManager` → `RecordingController` → `RecorderViewModel`, which transitions to `.error` and **finalizes the partial WAV** so audio captured before the failure is preserved and playable. Previously the UI kept showing "Recording" while nothing was written. (BL-020)
 - **`RecordingState` state machine** — A single source of truth for the recording lifecycle (`idle`/`starting`/`recording`/`stopping`/`error`/`recovering`), owned by `RecorderViewModel`. Illegal transitions (e.g. `idle → stopping`) are rejected by `canTransition(to:)`, making "UI shows recording while nothing is written" unrepresentable. (BL-006)
-- **Unit tests** — `RecordingStateTests` (transition matrix), `WAVWriterTests` (data integrity), `AudioRecorderTests` (no-drops on stop + rapid start/stop under Thread Sanitizer), and `StreamFailureTests` (stream-failure → `.error` + finalize-once). 20 tests, no hardware, TSan-clean. (BL-006, BL-004, BL-024, BL-020)
+- **Unit tests** — `RecordingStateTests` (transition matrix), `WAVWriterTests` (data integrity + crash-safe header), `AudioRecorderTests` (no-drops + 20× cycles under Thread Sanitizer), `StreamFailureTests`, and `RecorderViewModelTests` (lifecycle, permission gating, error handling, clock-driven duration, stream-failure). 30 tests, no hardware, deterministic (no sleeps), TSan-clean. (BL-006, BL-004, BL-024, BL-020, BL-022, BL-005)
 
 ### Fixed
 - **Audio-state data races** — All access to the WAV writer is now confined to `AudioRecorder`'s serial processing queue: buffers are handed off without reading writer state on the capture thread, start/stop assign the writer on the queue, and stop runs after all in-flight buffers (FIFO) so no trailing audio is dropped and the writer is finalized exactly once. Verified Thread-Sanitizer-clean across a record/stop cycle and a 20× start/stop loop. (BL-024)
+- **Crash/force-quit could leave an unreadable recording** — `WAVWriter` now rewrites the header in place every ~32 buffers (~0.7s), so a file killed mid-recording still has a valid, non-zero data size and plays back. `finalize()` continues to write the authoritative header on a clean stop. (BL-022)
 - **Dependency-injection seams** — Introduced protocols `AudioCapturing`, `AudioFileWriting`, `RecordingControlling`, and `PermissionProviding`, plus a `DurationClock` abstraction (with `SystemDurationClock`). The core recording types and the view model now accept these via initializers (defaulting to the real implementations), so the workflow can be exercised with mocks and a fake clock — no audio hardware or Screen Recording permission required. (BL-003)
 
 ### Changed
@@ -46,10 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `RecordingState.swift` | New — `RecordingState` + `RecorderError` (+ `streamFailed`, BL-020) + transition rules (BL-006) |
 | `RecorderViewModel.swift` | Owns `RecordingState`; transitions + state-derived `isRecording`/`statusText` (BL-006); `handleStreamFailure` wiring (BL-020) |
 | `MenuBarController.swift` | Observes `$state` (mapped to recording) instead of `$isRecording` (BL-006) |
-| `WAVWriter.swift` | `WAVWriterError` made `Equatable` (BL-004) |
+| `WAVWriter.swift` | `WAVWriterError` made `Equatable` (BL-004); periodic in-place header rewrite for crash safety (BL-022) |
 | `AudioCapturing.swift`, `RecordingControlling.swift` | Added `onStreamError`; `RecordingControlling.finalizeAfterFailure()` (BL-020) |
 | `RecordingController.swift` | Forwards capture `onStreamError`; `finalizeAfterFailure()` preserves partial WAV (BL-020) |
-| `HomeRecTests/RecordingStateTests.swift`, `WAVWriterTests.swift`, `AudioRecorderTests.swift`, `StreamFailureTests.swift`, `Mocks.swift` | New — Swift Testing suites + test doubles (BL-006, BL-004, BL-024, BL-020) |
+| `HomeRecTests/RecordingStateTests.swift`, `WAVWriterTests.swift`, `AudioRecorderTests.swift`, `StreamFailureTests.swift`, `RecorderViewModelTests.swift`, `Mocks.swift` | New — Swift Testing suites + test doubles (BL-006, BL-004, BL-024, BL-020, BL-022, BL-005) |
 
 ---
 

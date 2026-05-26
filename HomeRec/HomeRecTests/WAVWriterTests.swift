@@ -141,6 +141,30 @@ struct WAVWriterTests {
         #expect(readUInt32LE(bytes, 40) == expected)
     }
 
+    @Test("Header is periodically rewritten so the file is playable without finalize (crash safety)")
+    func periodicHeaderMakesFilePlayableWithoutFinalize() throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let writer = WAVWriter()
+        try writer.createFile(at: url, sampleRate: 48000, channels: 2)
+
+        // Write exactly enough buffers to trigger one periodic header rewrite.
+        let frames = 64
+        let count = WAVWriter.headerUpdateInterval
+        for _ in 0..<count {
+            try writer.writeBuffer(makeFloatBuffer(channels: 2, frames: AVAudioFrameCount(frames)) { _, _ in 0 })
+        }
+
+        // Deliberately DO NOT finalize — simulate a crash / force-quit.
+        let bytes = [UInt8](try Data(contentsOf: url))
+        let dataSize = readUInt32LE(bytes, 40)
+        let expected = UInt32(count * frames * 2 * 2)
+        #expect(dataSize == expected)   // header reflects written audio
+        #expect(dataSize > 0)           // not the initial zero-size (unreadable) header
+        #expect(readUInt32LE(bytes, 4) == 36 + expected)
+    }
+
     // MARK: - Int16 conversion / clipping
 
     @Test("Float→Int16 conversion clamps to the representable range")

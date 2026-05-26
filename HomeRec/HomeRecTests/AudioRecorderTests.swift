@@ -110,18 +110,24 @@ struct AudioRecorderTests {
         #expect(try wavDataSize(at: url) == expected)
     }
 
-    @Test("Rapid start/stop cycles complete cleanly (TSan target)")
+    @Test("20 rapid start/stop cycles produce no corrupt-header files (TSan target)")
     func rapidStartStopCycles() throws {
+        let buffersPerCycle = 5
+        let framesPerBuffer = 32
         for _ in 0..<20 {
             let url = tempURL()
             defer { try? FileManager.default.removeItem(at: url) }
 
             let recorder = AudioRecorder()
             try recorder.startRecording(to: url)
-            for _ in 0..<5 {
-                recorder.processAudioSample(makeSampleBuffer(frames: 32))
+            for _ in 0..<buffersPerCycle {
+                recorder.processAudioSample(makeSampleBuffer(frames: framesPerBuffer))
             }
             try recorder.stopRecording()
+
+            // Header must be valid and match the audio written (no corruption).
+            let expected = buffersPerCycle * framesPerBuffer * 2 * 2
+            #expect(try wavDataSize(at: url) == expected)
         }
     }
 
