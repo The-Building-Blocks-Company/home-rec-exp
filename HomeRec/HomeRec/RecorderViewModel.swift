@@ -26,6 +26,8 @@ class RecorderViewModel: ObservableObject {
     @Published var recoverySuggestion: RecoverySuggestion?
     /// Set once a recording passes the long-recording threshold.
     @Published var showLongRecordingWarning = false
+    /// Whether the first-run onboarding sheet should be shown.
+    @Published var showOnboarding = false
     @Published var lastRecordingURL: URL?
     @Published var permissionStatus: PermissionStatus = .notDetermined
     @Published var waveformSamples: [Float] = Array(repeating: 0, count: 200)
@@ -41,17 +43,22 @@ class RecorderViewModel: ObservableObject {
     private var recordingStartTime: Date?
     private var longRecordingWarned = false
     private var activationObserver: NSObjectProtocol?
+    private let defaults: UserDefaults
+    private let onboardingCompletedKey = "hasCompletedOnboarding"
 
     // MARK: - Initialization
 
     init(
         controller: RecordingControlling? = nil,
         permissions: PermissionProviding? = nil,
-        clock: DurationClock? = nil
+        clock: DurationClock? = nil,
+        defaults: UserDefaults = .standard
     ) {
         self.controller = controller ?? RecordingController()
         self.permissions = permissions ?? PermissionManager()
         self.clock = clock ?? SystemDurationClock()
+        self.defaults = defaults
+        self.showOnboarding = !defaults.bool(forKey: onboardingCompletedKey)
         self.controller.onStreamError = { [weak self] message in
             self?.handleStreamFailure(message)
         }
@@ -181,6 +188,17 @@ class RecorderViewModel: ObservableObject {
     /// Open System Settings
     func openSystemSettings() {
         permissions.openSystemPreferences()
+    }
+
+    /// Mark first-run onboarding complete and dismiss it.
+    func completeOnboarding() {
+        defaults.set(true, forKey: onboardingCompletedKey)
+        showOnboarding = false
+    }
+
+    /// Re-open the onboarding sheet (e.g. from the Help menu).
+    func showOnboardingAgain() {
+        showOnboarding = true
     }
 
     // MARK: - Private Methods

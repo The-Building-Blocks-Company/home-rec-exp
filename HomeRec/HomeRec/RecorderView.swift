@@ -127,6 +127,10 @@ struct RecorderView: View {
         } message: {
             Text("You've been recording for a while. Long recordings use a lot of disk space — about 10 MB per minute.")
         }
+        .sheet(isPresented: $viewModel.showOnboarding) {
+            OnboardingView()
+                .environmentObject(viewModel)
+        }
         .onAppear {
             Task {
                 await viewModel.checkPermission()

@@ -47,5 +47,13 @@ struct HomeRecApp: App {
                 }
         }
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(replacing: .help) {
+                Button("Welcome to Home Rec") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    viewModel.showOnboardingAgain()
+                }
+            }
+        }
     }
 }

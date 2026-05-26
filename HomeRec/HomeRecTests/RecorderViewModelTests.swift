@@ -149,6 +149,35 @@ struct RecorderViewModelTests {
         #expect(clock.isTicking == false)
     }
 
+    @Test("Onboarding shows on first launch, and not after completion (BL-041)")
+    func onboardingShownOnce() {
+        let defaults = UserDefaults(suiteName: "onboarding-test-\(UUID().uuidString)")!
+
+        let first = RecorderViewModel(
+            controller: MockRecordingControlling(),
+            permissions: MockPermissionProviding(),
+            clock: ManualClock(),
+            defaults: defaults
+        )
+        #expect(first.showOnboarding)
+
+        first.completeOnboarding()
+        #expect(first.showOnboarding == false)
+
+        // A fresh launch with the same defaults does not show it again.
+        let second = RecorderViewModel(
+            controller: MockRecordingControlling(),
+            permissions: MockPermissionProviding(),
+            clock: ManualClock(),
+            defaults: defaults
+        )
+        #expect(second.showOnboarding == false)
+
+        // …but it can be re-opened on demand.
+        second.showOnboardingAgain()
+        #expect(second.showOnboarding)
+    }
+
     @Test("Disk-space threshold logic")
     func diskSpaceThreshold() {
         #expect(DiskSpace.hasEnoughSpace(availableBytes: DiskSpace.minimumBytesToRecord))

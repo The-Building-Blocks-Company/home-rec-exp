@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **First-run onboarding** — A one-screen welcome sheet on first launch explains what Home Rec does and why it needs Screen Recording permission (audio only, never the screen), with an "Open Settings" button and a live "you're ready" confirmation once permission is granted (re-detected automatically). Shown once (persisted) and re-openable from the Help menu. (BL-041)
 - **Disk-space + long-recording guardrails** — Home Rec now refuses to start a recording when the destination volume has less than ~100 MB free (showing a clear message instead of producing a doomed file), and warns once a single recording passes 30 minutes (offering to stop), since WAV uses ~10 MB/min. The menu bar icon already indicates an active recording at all times. (BL-043)
 - **Diagnostics export + "Report a Problem"** — A menu-bar action gathers recent `os.Logger` entries (via `OSLogStore`) plus app/macOS version into a shareable text file (saved via a save panel), and "Report a Problem" opens a prefilled GitHub issue with version info — replacing the old hunt-for-a-Desktop-log workflow. (BL-042)
 - **Human-readable errors with recovery actions** — Error states now show plain-language messages (no raw system error strings) plus a concrete next step where one exists: stream failures offer "Open Settings", start failures offer "Try Again". Shown in the main window alert and inline in the menu bar popover. Technical detail is retained for logs/diagnostics only. (BL-044)
@@ -53,7 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `Diagnostics.swift` | New — diagnostics report (OSLogStore) + export panel + Report-a-Problem URL (BL-042) |
 | `DiskSpace.swift` | New — free-space threshold + long-recording threshold (BL-043) |
 | `RecordingController.swift` | `RecordingControllerError.insufficientDiskSpace`; free-space precheck on start (BL-043) |
-| `RecorderView.swift` | Long-recording warning alert (BL-043) |
+| `RecorderView.swift` | Long-recording warning alert (BL-043); onboarding sheet (BL-041) |
+| `OnboardingView.swift` | New — first-run welcome sheet (BL-041) |
+| `RecorderViewModel.swift` | Onboarding state via injected `UserDefaults`; `completeOnboarding`/`showOnboardingAgain` (BL-041) |
+| `HomeRecApp.swift` | Help menu "Welcome to Home Rec" command (BL-041) |
 | `MenuBarPopoverView.swift` | Help row: Export Diagnostics… / Report a Problem (BL-042) |
 | `RecorderViewModel.swift` | Owns `RecordingState`; transitions + state-derived `isRecording`/`statusText` (BL-006); `handleStreamFailure` wiring (BL-020); re-probes permission on app activation (BL-040) |
 | `MenuBarController.swift` | Observes `$state` (mapped to recording) instead of `$isRecording` (BL-006) |
