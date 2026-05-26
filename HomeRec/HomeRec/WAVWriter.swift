@@ -9,7 +9,7 @@ import Foundation
 import AVFoundation
 
 /// Errors that can occur during WAV file writing
-enum WAVWriterError: Error, LocalizedError {
+enum WAVWriterError: Error, LocalizedError, Equatable {
     case fileCreationFailed
     case fileWriteFailed
     case invalidFormat

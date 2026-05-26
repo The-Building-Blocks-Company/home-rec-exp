@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`RecordingState` state machine** — A single source of truth for the recording lifecycle (`idle`/`starting`/`recording`/`stopping`/`error`/`recovering`), owned by `RecorderViewModel`. Illegal transitions (e.g. `idle → stopping`) are rejected by `canTransition(to:)`, making "UI shows recording while nothing is written" unrepresentable. (BL-006)
+- **Unit tests** — `RecordingStateTests` (exhaustive 6×6 transition matrix + named cases) and `WAVWriterTests` (header layout, finalize/size accounting, Int16 conversion & clipping incl. the documented `-32768` asymmetry, error paths, golden ramp). 15 tests, no hardware, run in milliseconds. (BL-006, BL-004)
 - **Dependency-injection seams** — Introduced protocols `AudioCapturing`, `AudioFileWriting`, `RecordingControlling`, and `PermissionProviding`, plus a `DurationClock` abstraction (with `SystemDurationClock`). The core recording types and the view model now accept these via initializers (defaulting to the real implementations), so the workflow can be exercised with mocks and a fake clock — no audio hardware or Screen Recording permission required. (BL-003)
 
 ### Changed
@@ -15,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **No logging on the audio hot path** — Removed all logging from `AudioRecorder.processSampleBuffer` and the ScreenCaptureKit output callback, which ran per audio buffer (~47×/sec) on the capture thread and risked the very dropouts the app exists to prevent.
 - **`PermissionManager` is now instance-based** — Converted its static methods to instance methods conforming to `PermissionProviding` (no behavior change). (BL-003)
 - **Duration timer uses an injected clock** — `RecorderViewModel` drives the duration display through `DurationClock` instead of a hard-wired `Timer`, enabling deterministic time in tests. (BL-003)
+- **View model drives the state machine** — `RecorderViewModel.isRecording` is now derived from `state` (no longer a stored flag); start/stop/error are explicit transitions, and `statusText` reflects every state. (BL-006)
+- **`AudioRecorder` no longer keeps a standalone `isRecording` flag** — its recording status is derived from whether a file writer is active, removing one of the duplicated booleans that could desync. (BL-006)
+- **`WAVWriterError` is now `Equatable`** — enables precise error-path assertions in tests (no behavior change). (BL-004)
 
 ### Removed
 - **`DebugLogger`** — Retired entirely. It opened/seeked/wrote/closed a `FileHandle` plus a synchronous `print()` on every call and dumped `~/Desktop/AudioRecorderDebug.log` in all builds, leaking absolute paths and cluttering the user's Desktop.
@@ -32,8 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `AudioCapturing.swift`, `AudioFileWriting.swift`, `RecordingControlling.swift`, `PermissionProviding.swift`, `Clock.swift` | New — DI protocols + `SystemDurationClock` (BL-003) |
 | `PermissionManager.swift` | Static methods → instance methods conforming to `PermissionProviding` (BL-003) |
 | `RecordingController.swift` | Conforms to `RecordingControlling`; injects `AudioCapturing`/`AudioFileWriting` (BL-003) |
-| `AudioRecorder.swift` | Conforms to `AudioFileWriting`; removed redundant `deinit` (BL-003) |
+| `AudioRecorder.swift` | Conforms to `AudioFileWriting`; removed redundant `deinit` (BL-003); dropped standalone `isRecording` flag, derive from writer (BL-006) |
 | `ScreenCaptureAudioManager.swift` | Conforms to `AudioCapturing` (BL-003) |
+| `RecordingState.swift` | New — `RecordingState` + `RecorderError` + transition rules (BL-006) |
+| `RecorderViewModel.swift` | Owns `RecordingState`; transitions + state-derived `isRecording`/`statusText` (BL-006) |
+| `MenuBarController.swift` | Observes `$state` (mapped to recording) instead of `$isRecording` (BL-006) |
+| `WAVWriter.swift` | `WAVWriterError` made `Equatable` (BL-004) |
+| `HomeRecTests/RecordingStateTests.swift`, `HomeRecTests/WAVWriterTests.swift` | New — Swift Testing suites (BL-006, BL-004) |
 
 ---
 

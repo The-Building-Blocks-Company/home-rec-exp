@@ -16,13 +16,17 @@ class RecorderViewModel: ObservableObject {
 
     // MARK: - Published Properties
 
-    @Published var isRecording = false
+    /// Single source of truth for the recording lifecycle. The UI derives from this.
+    @Published private(set) var state: RecordingState = .idle
     @Published var duration: TimeInterval = 0
     @Published var errorMessage: String?
     @Published var showError = false
     @Published var lastRecordingURL: URL?
     @Published var permissionStatus: PermissionStatus = .notDetermined
     @Published var waveformSamples: [Float] = Array(repeating: 0, count: 200)
+
+    /// Whether a recording is actively capturing. Derived from `state`.
+    var isRecording: Bool { state == .recording }
 
     // MARK: - Private Properties
 
@@ -65,13 +69,18 @@ class RecorderViewModel: ObservableObject {
 
     /// Start recording
     func startRecording() async {
-        // Check permission first
+        // Only legal from idle or a prior error state.
+        guard state.canTransition(to: .starting) else { return }
+
+        // Check permission first; if not granted, remain in the current state.
         if permissionStatus != .granted {
             await requestPermission()
             if permissionStatus != .granted {
                 return
             }
         }
+
+        transition(to: .starting)
 
         do {
             // Wire waveform callback
@@ -83,44 +92,50 @@ class RecorderViewModel: ObservableObject {
             // Start recording
             let fileURL = try await controller.startRecording()
             lastRecordingURL = fileURL
-
-            // Update state
-            isRecording = true
             recordingStartTime = clock.now
             duration = 0
+
+            transition(to: .recording)
 
             // Start duration timer
             startTimer()
 
         } catch {
             Log.recorder.error("Failed to start recording: \(error.localizedDescription, privacy: .public)")
-            showError(message: "Failed to start recording: \(error.localizedDescription)")
+            transition(to: .error(.startFailed(error.localizedDescription)))
         }
     }
 
     /// Stop recording
     func stopRecording() async {
+        guard state.canTransition(to: .stopping) else { return }
+
+        transition(to: .stopping)
+
         do {
-            // Stop recording
             try await controller.stopRecording()
 
-            // Update state
-            isRecording = false
             stopTimer()
             waveformSamples = Array(repeating: 0, count: 200)
 
+            transition(to: .idle)
+
         } catch {
             Log.recorder.error("Failed to stop recording: \(error.localizedDescription, privacy: .public)")
-            showError(message: "Failed to stop recording: \(error.localizedDescription)")
+            transition(to: .error(.stopFailed(error.localizedDescription)))
         }
     }
 
     /// Toggle recording state
     func toggleRecording() async {
-        if isRecording {
-            await stopRecording()
-        } else {
+        switch state {
+        case .idle, .error:
             await startRecording()
+        case .recording:
+            await stopRecording()
+        case .starting, .stopping, .recovering:
+            // Ignore taps during in-flight transitions.
+            break
         }
     }
 
@@ -137,6 +152,19 @@ class RecorderViewModel: ObservableObject {
     }
 
     // MARK: - Private Methods
+
+    /// Apply a state transition, rejecting illegal ones. Surfaces the alert when
+    /// entering an error state.
+    private func transition(to next: RecordingState) {
+        guard state.canTransition(to: next) else {
+            Log.recorder.error("Rejected illegal recording-state transition")
+            return
+        }
+        state = next
+        if case .error(let recorderError) = next {
+            showError(message: recorderError.message)
+        }
+    }
 
     /// Start duration timer
     private func startTimer() {
@@ -168,12 +196,19 @@ class RecorderViewModel: ObservableObject {
 
     /// Status text
     var statusText: String {
-        if isRecording {
+        switch state {
+        case .recording:
             return "Recording"
-        } else if permissionStatus != .granted {
-            return "Almost ready"
-        } else {
-            return "Play something, then hit record"
+        case .starting:
+            return "Starting…"
+        case .stopping:
+            return "Stopping…"
+        case .recovering:
+            return "Recovering…"
+        case .error:
+            return "Something went wrong"
+        case .idle:
+            return permissionStatus != .granted ? "Almost ready" : "Play something, then hit record"
         }
     }
 }

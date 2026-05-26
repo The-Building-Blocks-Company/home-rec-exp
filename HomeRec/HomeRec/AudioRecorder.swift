@@ -50,7 +50,6 @@ class AudioRecorder: AudioFileWriting {
     // MARK: - Properties
 
     private var wavWriter: WAVWriter?
-    private var isRecording = false
 
     private let sampleRate: Double = 48000  // Match ScreenCaptureKit config
     private let channels: Int = 2           // Stereo
@@ -74,14 +73,13 @@ class AudioRecorder: AudioFileWriting {
         try writer.createFile(at: fileURL, sampleRate: sampleRate, channels: channels)
         self.wavWriter = writer
 
-        isRecording = true
         Log.recorder.debug("AudioRecorder started: \(fileURL.path, privacy: .private)")
     }
 
     /// Process audio sample from ScreenCaptureKit
     /// - Parameter sampleBuffer: Audio sample from SCStream
     func processAudioSample(_ sampleBuffer: CMSampleBuffer) {
-        guard isRecording else { return }
+        guard wavWriter != nil else { return }
 
         // Process on background queue to avoid blocking capture
         processingQueue.async { [weak self] in
@@ -92,7 +90,7 @@ class AudioRecorder: AudioFileWriting {
     /// Stop recording
     /// - Throws: AudioRecorderError if stop fails
     func stopRecording() throws {
-        guard isRecording else {
+        guard wavWriter != nil else {
             throw AudioRecorderError.notRecording
         }
 
@@ -102,12 +100,11 @@ class AudioRecorder: AudioFileWriting {
             try? wavWriter?.finalize()
             wavWriter = nil
         }
-
-        isRecording = false
     }
 
+    /// Whether the recorder is currently writing to a file.
     var recording: Bool {
-        return isRecording
+        return wavWriter != nil
     }
 
     // MARK: - Private Methods
