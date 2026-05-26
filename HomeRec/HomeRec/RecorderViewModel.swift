@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftUI
+import AppKit
 import Combine
 import os
 
@@ -34,6 +35,7 @@ class RecorderViewModel: ObservableObject {
     private let permissions: PermissionProviding
     private let clock: DurationClock
     private var recordingStartTime: Date?
+    private var activationObserver: NSObjectProtocol?
 
     // MARK: - Initialization
 
@@ -48,8 +50,23 @@ class RecorderViewModel: ObservableObject {
         self.controller.onStreamError = { [weak self] message in
             self?.handleStreamFailure(message)
         }
+        // Re-probe permission whenever the app regains focus, so granting Screen
+        // Recording in System Settings takes effect without a relaunch.
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.checkPermission() }
+        }
         Task {
             await checkPermission()
+        }
+    }
+
+    deinit {
+        if let activationObserver {
+            NotificationCenter.default.removeObserver(activationObserver)
         }
     }
 

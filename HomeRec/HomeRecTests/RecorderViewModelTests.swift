@@ -39,6 +39,24 @@ struct RecorderViewModelTests {
         #expect(viewModel.isRecording == false)
     }
 
+    @Test("Re-probing reflects a newly granted permission without relaunch (BL-040)")
+    func permissionReprobeUpdatesState() async {
+        let permission = MockPermissionProviding(.denied)
+        let viewModel = RecorderViewModel(
+            controller: MockRecordingControlling(),
+            permissions: permission,
+            clock: ManualClock()
+        )
+
+        await viewModel.checkPermission()
+        #expect(viewModel.permissionStatus == .denied)
+
+        // User flips the toggle in System Settings; app re-probes on regaining focus.
+        permission.status = .granted
+        await viewModel.checkPermission()
+        #expect(viewModel.permissionStatus == .granted)
+    }
+
     @Test("startRecording with granted permission transitions to recording")
     func startWithPermissionRecords() async {
         let controller = MockRecordingControlling()
