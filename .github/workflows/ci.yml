@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests (Thread Sanitizer)
+    # NOTE: the runner's Xcode must provide the macOS SDK this project targets.
+    # If the image's Xcode is too old, pin a newer one with `xcode-select` below
+    # or bump the runner image. See the "Select Xcode" step.
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        # Adjust to an installed Xcode whose SDK matches the project. List with:
+        #   ls /Applications | grep Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          swift --version
+
+      - name: Run unit tests
+        # Unit tests only (no TCC/Screen-Recording-dependent UI tests, which can't
+        # run headless). Thread Sanitizer is enabled to catch the audio data races
+        # guarded by BL-024. CODE_SIGNING_ALLOWED=NO avoids needing a signing
+        # identity; if the test host fails to launch, switch to ad-hoc signing:
+        #   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project HomeRec/HomeRec.xcodeproj \
+            -scheme HomeRec \
+            -destination 'platform=macOS' \
+            -only-testing:HomeRecTests \
+            -enableThreadSanitizer YES \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults.xcresult
+          if-no-files-found: ignore
