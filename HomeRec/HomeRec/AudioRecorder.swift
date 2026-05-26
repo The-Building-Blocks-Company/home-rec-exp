@@ -45,7 +45,7 @@ enum AudioRecorderError: Error, LocalizedError {
 }
 
 /// Records audio from ScreenCaptureKit to WAV file
-class AudioRecorder {
+class AudioRecorder: AudioFileWriting {
 
     // MARK: - Properties
 
@@ -248,13 +248,5 @@ class AudioRecorder {
         // Write to WAV file. Errors are intentionally not logged here (hot path);
         // surfacing write failures to the user is handled separately.
         try? wavWriter.writeBuffer(pcmBuffer)
-    }
-
-    // MARK: - Cleanup
-
-    deinit {
-        if isRecording {
-            try? stopRecording()
-        }
     }
 }

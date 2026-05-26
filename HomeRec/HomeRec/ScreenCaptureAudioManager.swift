@@ -45,7 +45,7 @@ enum ScreenCaptureAudioError: Error, LocalizedError {
 }
 
 /// Manages system audio capture using ScreenCaptureKit
-class ScreenCaptureAudioManager: NSObject {
+class ScreenCaptureAudioManager: NSObject, AudioCapturing {
 
     // MARK: - Properties
 

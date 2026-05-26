@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Dependency-injection seams** — Introduced protocols `AudioCapturing`, `AudioFileWriting`, `RecordingControlling`, and `PermissionProviding`, plus a `DurationClock` abstraction (with `SystemDurationClock`). The core recording types and the view model now accept these via initializers (defaulting to the real implementations), so the workflow can be exercised with mocks and a fake clock — no audio hardware or Screen Recording permission required. (BL-003)
+
 ### Changed
 - **Logging moved to `os.Logger`** — Replaced the file-based `DebugLogger`, `NSLog`, and `print` diagnostics with the unified logging system under subsystem `com.mdebritto.homerec` (categories: `capture`, `recorder`, `file`, `permission`). Lifecycle events are logged at `.debug`/`.info`; failures at `.error` so they remain diagnosable from a shipped build via Console.app. (BL-001)
 - **No logging on the audio hot path** — Removed all logging from `AudioRecorder.processSampleBuffer` and the ScreenCaptureKit output callback, which ran per audio buffer (~47×/sec) on the capture thread and risked the very dropouts the app exists to prevent.
+- **`PermissionManager` is now instance-based** — Converted its static methods to instance methods conforming to `PermissionProviding` (no behavior change). (BL-003)
+- **Duration timer uses an injected clock** — `RecorderViewModel` drives the duration display through `DurationClock` instead of a hard-wired `Timer`, enabling deterministic time in tests. (BL-003)
 
 ### Removed
 - **`DebugLogger`** — Retired entirely. It opened/seeked/wrote/closed a `FileHandle` plus a synchronous `print()` on every call and dumped `~/Desktop/AudioRecorderDebug.log` in all builds, leaking absolute paths and cluttering the user's Desktop.
@@ -22,8 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `AudioRecorder.swift` | Removed all logging from `processSampleBuffer`/`processAudioSample`; lifecycle log on start; `import os` |
 | `ScreenCaptureAudioManager.swift` | Removed per-buffer logging from the output callback; lifecycle/error logs via `Log.capture`; `import os` |
 | `RecordingController.swift` | Replaced step-by-step logs with concise lifecycle logs; removed per-sample log in capture callback; `import os` |
-| `RecorderViewModel.swift` | Replaced `DebugLogger` with `Log.recorder` error logging; `import os` |
+| `RecorderViewModel.swift` | Replaced `DebugLogger` with `Log.recorder` error logging; `import os`; inject `RecordingControlling`/`PermissionProviding`/`DurationClock`; removed `Timer` and `deinit` |
 | `HomeRecApp.swift` | Dropped app-launch test log; font-registration failures now log via `os.Logger`; `import os` |
+| `AudioCapturing.swift`, `AudioFileWriting.swift`, `RecordingControlling.swift`, `PermissionProviding.swift`, `Clock.swift` | New — DI protocols + `SystemDurationClock` (BL-003) |
+| `PermissionManager.swift` | Static methods → instance methods conforming to `PermissionProviding` (BL-003) |
+| `RecordingController.swift` | Conforms to `RecordingControlling`; injects `AudioCapturing`/`AudioFileWriting` (BL-003) |
+| `AudioRecorder.swift` | Conforms to `AudioFileWriting`; removed redundant `deinit` (BL-003) |
+| `ScreenCaptureAudioManager.swift` | Conforms to `AudioCapturing` (BL-003) |
 
 ---
 

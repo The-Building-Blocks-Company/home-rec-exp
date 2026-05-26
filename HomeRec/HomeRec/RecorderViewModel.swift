@@ -26,13 +26,21 @@ class RecorderViewModel: ObservableObject {
 
     // MARK: - Private Properties
 
-    private let controller = RecordingController()
+    private let controller: RecordingControlling
+    private let permissions: PermissionProviding
+    private let clock: DurationClock
     private var recordingStartTime: Date?
-    private var timer: Timer?
 
     // MARK: - Initialization
 
-    init() {
+    init(
+        controller: RecordingControlling? = nil,
+        permissions: PermissionProviding? = nil,
+        clock: DurationClock? = nil
+    ) {
+        self.controller = controller ?? RecordingController()
+        self.permissions = permissions ?? PermissionManager()
+        self.clock = clock ?? SystemDurationClock()
         Task {
             await checkPermission()
         }
@@ -42,12 +50,12 @@ class RecorderViewModel: ObservableObject {
 
     /// Check permission status
     func checkPermission() async {
-        permissionStatus = await PermissionManager.checkPermission()
+        permissionStatus = await permissions.checkPermission()
     }
 
     /// Request permission
     func requestPermission() async {
-        let granted = await PermissionManager.requestPermission()
+        let granted = await permissions.requestPermission()
         permissionStatus = granted ? .granted : .denied
 
         if !granted {
@@ -78,7 +86,7 @@ class RecorderViewModel: ObservableObject {
 
             // Update state
             isRecording = true
-            recordingStartTime = Date()
+            recordingStartTime = clock.now
             duration = 0
 
             // Start duration timer
@@ -125,26 +133,22 @@ class RecorderViewModel: ObservableObject {
 
     /// Open System Settings
     func openSystemSettings() {
-        PermissionManager.openSystemPreferences()
+        permissions.openSystemPreferences()
     }
 
     // MARK: - Private Methods
 
     /// Start duration timer
     private func startTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            Task { @MainActor in
-                guard let startTime = self.recordingStartTime else { return }
-                self.duration = Date().timeIntervalSince(startTime)
-            }
+        clock.startTicking(every: 0.1) { [weak self] in
+            guard let self, let startTime = self.recordingStartTime else { return }
+            self.duration = self.clock.now.timeIntervalSince(startTime)
         }
     }
 
     /// Stop duration timer
     private func stopTimer() {
-        timer?.invalidate()
-        timer = nil
+        clock.stopTicking()
     }
 
     /// Show error message
@@ -171,12 +175,5 @@ class RecorderViewModel: ObservableObject {
         } else {
             return "Play something, then hit record"
         }
-    }
-
-    // MARK: - Cleanup
-
-    deinit {
-        timer?.invalidate()
-        timer = nil
     }
 }

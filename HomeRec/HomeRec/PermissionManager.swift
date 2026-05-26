@@ -17,12 +17,12 @@ enum PermissionStatus {
 }
 
 /// Manages Screen Recording permission (required for Core Audio Taps)
-class PermissionManager {
+class PermissionManager: PermissionProviding {
 
     /// Check current Screen Recording permission status using SCShareableContent.
     /// This also registers the app in System Settings > Screen Recording.
     /// - Returns: Current permission status
-    static func checkPermission() async -> PermissionStatus {
+    func checkPermission() async -> PermissionStatus {
         do {
             // Probing SCShareableContent registers the app in the Screen Recording list
             // and succeeds only if permission is already granted.
@@ -37,8 +37,7 @@ class PermissionManager {
     /// Probes SCShareableContent to register the app, then opens System Settings
     /// so the user can flip the toggle (the app will now appear in the list).
     /// - Returns: True if permission is already granted, false otherwise
-    @MainActor
-    static func requestPermission() async -> Bool {
+    func requestPermission() async -> Bool {
         let status = await checkPermission()
         if status == .granted {
             return true
@@ -49,7 +48,7 @@ class PermissionManager {
     }
 
     /// Open System Settings to Screen Recording privacy pane
-    static func openSystemPreferences() {
+    func openSystemPreferences() {
         // Open System Settings to Privacy & Security > Screen Recording
         if #available(macOS 13.0, *) {
             // macOS Ventura and later

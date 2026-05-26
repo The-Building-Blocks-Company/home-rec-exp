@@ -9,17 +9,27 @@ import Foundation
 import os
 
 /// Controller that coordinates audio recording workflow
-class RecordingController {
+class RecordingController: RecordingControlling {
 
     // MARK: - Properties
 
-    private let captureManager = ScreenCaptureAudioManager()
-    private let audioRecorder = AudioRecorder()
+    private let captureManager: AudioCapturing
+    private let audioRecorder: AudioFileWriting
 
     private var currentRecordingURL: URL?
 
     /// Callback for waveform visualization data
     var onWaveformData: (([Float]) -> Void)?
+
+    // MARK: - Initialization
+
+    init(
+        captureManager: AudioCapturing? = nil,
+        audioRecorder: AudioFileWriting? = nil
+    ) {
+        self.captureManager = captureManager ?? ScreenCaptureAudioManager()
+        self.audioRecorder = audioRecorder ?? AudioRecorder()
+    }
 
     // MARK: - Public Methods
 
@@ -101,8 +111,8 @@ class RecordingController {
         // Capture managers directly to avoid referencing self inside the Task closure
         let captureManager = captureManager
         let audioRecorder = audioRecorder
-        guard captureManager.capturing else { return }
-        Task {
+        Task { @MainActor in
+            guard captureManager.capturing else { return }
             try? await captureManager.stopCapture()
             try? audioRecorder.stopRecording()
             await captureManager.cleanup()
