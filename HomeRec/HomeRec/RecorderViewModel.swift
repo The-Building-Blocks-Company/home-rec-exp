@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import os
 
 /// View model managing recording state and user interactions
 @MainActor
@@ -56,21 +57,15 @@ class RecorderViewModel: ObservableObject {
 
     /// Start recording
     func startRecording() async {
-        DebugLogger.log("🎬 RecorderViewModel.startRecording() called")
-        DebugLogger.log("   Permission status: \(permissionStatus)")
-
         // Check permission first
         if permissionStatus != .granted {
-            DebugLogger.log("   ⚠️ Permission not granted, requesting...")
             await requestPermission()
             if permissionStatus != .granted {
-                DebugLogger.log("   ❌ Permission denied, aborting")
                 return
             }
         }
 
         do {
-            DebugLogger.log("   ✅ Permission OK, calling controller.startRecording()...")
             // Wire waveform callback
             controller.onWaveformData = { [weak self] samples in
                 Task { @MainActor in
@@ -79,7 +74,6 @@ class RecorderViewModel: ObservableObject {
             }
             // Start recording
             let fileURL = try await controller.startRecording()
-            DebugLogger.log("   ✅ Controller returned fileURL: \(fileURL.path)")
             lastRecordingURL = fileURL
 
             // Update state
@@ -89,17 +83,15 @@ class RecorderViewModel: ObservableObject {
 
             // Start duration timer
             startTimer()
-            DebugLogger.log("   ✅ Recording started successfully!")
 
         } catch {
-            DebugLogger.log("   ❌ Error: \(error.localizedDescription)")
+            Log.recorder.error("Failed to start recording: \(error.localizedDescription, privacy: .public)")
             showError(message: "Failed to start recording: \(error.localizedDescription)")
         }
     }
 
     /// Stop recording
     func stopRecording() async {
-        DebugLogger.log("🛑 RecorderViewModel.stopRecording() called")
         do {
             // Stop recording
             try await controller.stopRecording()
@@ -108,17 +100,15 @@ class RecorderViewModel: ObservableObject {
             isRecording = false
             stopTimer()
             waveformSamples = Array(repeating: 0, count: 200)
-            DebugLogger.log("   ✅ Recording stopped successfully!")
 
         } catch {
-            DebugLogger.log("   ❌ Error: \(error.localizedDescription)")
+            Log.recorder.error("Failed to stop recording: \(error.localizedDescription, privacy: .public)")
             showError(message: "Failed to stop recording: \(error.localizedDescription)")
         }
     }
 
     /// Toggle recording state
     func toggleRecording() async {
-        DebugLogger.log("🔄 toggleRecording() called, isRecording=\(isRecording)")
         if isRecording {
             await stopRecording()
         } else {

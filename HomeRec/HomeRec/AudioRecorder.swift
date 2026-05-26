@@ -8,6 +8,7 @@
 import Foundation
 import CoreMedia
 import AVFoundation
+import os
 
 /// Errors that can occur during audio recording
 enum AudioRecorderError: Error, LocalizedError {
@@ -69,31 +70,19 @@ class AudioRecorder {
     /// - Parameter fileURL: URL where WAV file will be saved
     /// - Throws: AudioRecorderError if recording cannot start
     func startRecording(to fileURL: URL) throws {
-        DebugLogger.log("🎙️ AudioRecorder.startRecording() called")
-        DebugLogger.log("   File URL: \(fileURL.path)")
-
-        // Create WAV writer
         let writer = WAVWriter()
-        DebugLogger.log("   Creating WAV file...")
         try writer.createFile(at: fileURL, sampleRate: sampleRate, channels: channels)
-        DebugLogger.log("   ✅ WAV file created")
         self.wavWriter = writer
 
         isRecording = true
-        DebugLogger.log("✅ AudioRecorder is now recording")
+        Log.recorder.debug("AudioRecorder started: \(fileURL.path, privacy: .private)")
     }
 
     /// Process audio sample from ScreenCaptureKit
     /// - Parameter sampleBuffer: Audio sample from SCStream
     func processAudioSample(_ sampleBuffer: CMSampleBuffer) {
-        guard isRecording else {
-            DebugLogger.log("⚠️ AudioRecorder: Received sample but not recording")
-            NSLog("⚠️ AudioRecorder: Received sample but not recording")
-            return
-        }
+        guard isRecording else { return }
 
-        DebugLogger.log("📥 AudioRecorder: Processing audio sample")
-        NSLog("📥 AudioRecorder: Processing audio sample")
         // Process on background queue to avoid blocking capture
         processingQueue.async { [weak self] in
             self?.processSampleBuffer(sampleBuffer)
@@ -126,28 +115,20 @@ class AudioRecorder {
     /// Process sample buffer on background thread
     /// - Parameter sampleBuffer: CMSampleBuffer from ScreenCaptureKit
     private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        DebugLogger.log("    🔄 processSampleBuffer() started")
-
-        guard let wavWriter = wavWriter else {
-            DebugLogger.log("    ❌ No WAV writer available")
-            print("⚠️ No WAV writer available")
-            return
-        }
-        DebugLogger.log("    ✅ WAV writer exists")
+        // No logging in this method: it runs per audio buffer (~47×/sec) on the
+        // processing queue. Failures return early; durable error propagation is
+        // handled on the stream-failure path, not by logging the hot path.
+        guard let wavWriter = wavWriter else { return }
 
         // Get format description
         guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else {
-            DebugLogger.log("    ❌ Failed to get format description")
             return
         }
-        DebugLogger.log("    ✅ Got format description")
 
         // Get audio stream description
         guard let streamDesc = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else {
-            DebugLogger.log("    ❌ Failed to get stream description")
             return
         }
-        DebugLogger.log("    ✅ Got stream description - SR: \(streamDesc.pointee.mSampleRate), Channels: \(streamDesc.pointee.mChannelsPerFrame)")
 
         // Create AVAudioFormat from stream description
         guard let format = AVAudioFormat(
@@ -156,34 +137,24 @@ class AudioRecorder {
             channels: AVAudioChannelCount(streamDesc.pointee.mChannelsPerFrame),
             interleaved: false
         ) else {
-            DebugLogger.log("    ❌ Failed to create AVAudioFormat")
             return
         }
-        DebugLogger.log("    ✅ Created AVAudioFormat")
 
         // Get number of frames
         let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
-        DebugLogger.log("    Frame count: \(frameCount)")
-        guard frameCount > 0 else {
-            DebugLogger.log("    ❌ Frame count is 0")
-            return
-        }
+        guard frameCount > 0 else { return }
 
         // Create PCM buffer
-        DebugLogger.log("    Creating PCM buffer...")
         guard let pcmBuffer = AVAudioPCMBuffer(
             pcmFormat: format,
             frameCapacity: AVAudioFrameCount(frameCount)
         ) else {
-            DebugLogger.log("    ❌ Failed to create PCM buffer")
             return
         }
-        DebugLogger.log("    ✅ PCM buffer created")
 
         pcmBuffer.frameLength = AVAudioFrameCount(frameCount)
 
         // Get audio buffer list from sample buffer
-        DebugLogger.log("    Getting audio buffer list...")
 
         // First, query the required size
         var requiredSize: Int = 0
@@ -198,11 +169,7 @@ class AudioRecorder {
             blockBufferOut: nil
         )
 
-        guard status == noErr else {
-            DebugLogger.log("    ❌ Failed to query buffer list size, status: \(status)")
-            return
-        }
-        DebugLogger.log("    Required buffer list size: \(requiredSize)")
+        guard status == noErr else { return }
 
         // Allocate the audio buffer list with the correct size
         let audioBufferListPtr = UnsafeMutableRawPointer.allocate(
@@ -223,28 +190,18 @@ class AudioRecorder {
             blockBufferOut: &blockBuffer
         )
 
-        guard status == noErr else {
-            DebugLogger.log("    ❌ Failed to get audio buffer list, status: \(status)")
-            return
-        }
+        guard status == noErr else { return }
         defer { blockBuffer = nil }
 
         let audioBufferListPointer = UnsafeMutableAudioBufferListPointer(audioBufferListPtr.assumingMemoryBound(to: AudioBufferList.self))
-        DebugLogger.log("    ✅ Got audio buffer list with \(audioBufferListPointer.count) buffers")
 
         // Copy audio data to PCM buffer
-        guard let floatChannelData = pcmBuffer.floatChannelData else {
-            DebugLogger.log("    ❌ PCM buffer has no float channel data")
-            return
-        }
-        DebugLogger.log("    ✅ Got float channel data")
+        guard let floatChannelData = pcmBuffer.floatChannelData else { return }
 
         let channelCount = Int(streamDesc.pointee.mChannelsPerFrame)
         let isInterleaved = (streamDesc.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0
-        DebugLogger.log("    Channels: \(channelCount), Interleaved: \(isInterleaved)")
 
         if isInterleaved {
-            DebugLogger.log("    Deinterleaving audio data...")
             // Deinterleave audio data
             if let buffer = audioBufferListPointer.first,
                let srcData = buffer.mData?.assumingMemoryBound(to: Float.self) {
@@ -255,20 +212,16 @@ class AudioRecorder {
                         floatChannelData[channel][frame] = srcData[srcIndex]
                     }
                 }
-                DebugLogger.log("    ✅ Deinterleaved \(frameCount) frames")
             } else {
-                DebugLogger.log("    ❌ Failed to get source data for deinterleaving")
                 return
             }
         } else {
-            DebugLogger.log("    Copying non-interleaved audio data...")
             // Non-interleaved (already separated by channel)
             for channel in 0..<min(channelCount, audioBufferListPointer.count) {
                 if let srcData = audioBufferListPointer[channel].mData?.assumingMemoryBound(to: Float.self) {
                     floatChannelData[channel].update(from: srcData, count: frameCount)
                 }
             }
-            DebugLogger.log("    ✅ Copied \(frameCount) frames for \(channelCount) channels")
         }
 
         // Extract waveform data for visualization
@@ -292,15 +245,9 @@ class AudioRecorder {
             }
         }
 
-        // Write to WAV file
-        do {
-            try wavWriter.writeBuffer(pcmBuffer)
-            DebugLogger.log("✅ AudioRecorder: Wrote \(pcmBuffer.frameLength) frames to WAV")
-            NSLog("✅ AudioRecorder: Wrote \(pcmBuffer.frameLength) frames to WAV")
-        } catch {
-            DebugLogger.log("❌ AudioRecorder: Failed to write buffer: \(error)")
-            NSLog("❌ AudioRecorder: Failed to write buffer: \(error)")
-        }
+        // Write to WAV file. Errors are intentionally not logged here (hot path);
+        // surfacing write failures to the user is handled separately.
+        try? wavWriter.writeBuffer(pcmBuffer)
     }
 
     // MARK: - Cleanup
