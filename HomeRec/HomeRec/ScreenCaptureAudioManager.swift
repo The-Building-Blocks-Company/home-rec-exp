@@ -53,6 +53,9 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
     private var audioCallback: ((CMSampleBuffer) -> Void)?
     private var isCapturing = false
 
+    /// Called when the stream stops unexpectedly. See `AudioCapturing`.
+    var onStreamError: (@MainActor (String) -> Void)?
+
     // MARK: - Public Methods
 
     /// Set up system audio capture
@@ -160,8 +163,10 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
 extension ScreenCaptureAudioManager: SCStreamDelegate {
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        Log.capture.error("Capture stream stopped with error: \(error.localizedDescription, privacy: .public)")
+        let message = error.localizedDescription
+        Log.capture.error("Capture stream stopped with error: \(message, privacy: .public)")
         isCapturing = false
+        onStreamError?(message)
     }
 }
 

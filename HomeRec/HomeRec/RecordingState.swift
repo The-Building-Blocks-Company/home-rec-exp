@@ -14,6 +14,7 @@ import Foundation
 enum RecorderError: Error, Equatable, Sendable {
     case startFailed(String)
     case stopFailed(String)
+    case streamFailed(String)
 
     /// User-facing message describing the failure.
     nonisolated var message: String {
@@ -22,6 +23,8 @@ enum RecorderError: Error, Equatable, Sendable {
             return "Failed to start recording: \(detail)"
         case .stopFailed(let detail):
             return "Failed to stop recording: \(detail)"
+        case .streamFailed(let detail):
+            return "Recording stopped unexpectedly: \(detail)"
         }
     }
 }

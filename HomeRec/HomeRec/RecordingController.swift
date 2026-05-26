@@ -21,6 +21,9 @@ class RecordingController: RecordingControlling {
     /// Callback for waveform visualization data
     var onWaveformData: (([Float]) -> Void)?
 
+    /// Forwarded from the capture manager when the stream fails mid-recording.
+    var onStreamError: (@MainActor (String) -> Void)?
+
     // MARK: - Initialization
 
     init(
@@ -29,6 +32,9 @@ class RecordingController: RecordingControlling {
     ) {
         self.captureManager = captureManager ?? ScreenCaptureAudioManager()
         self.audioRecorder = audioRecorder ?? AudioRecorder()
+        self.captureManager.onStreamError = { [weak self] message in
+            self?.onStreamError?(message)
+        }
     }
 
     // MARK: - Public Methods
@@ -76,6 +82,18 @@ class RecordingController: RecordingControlling {
         audioRecorder.onWaveformData = nil
         currentRecordingURL = nil
         Log.recorder.info("Recording stopped")
+    }
+
+    /// Finalize after an unexpected capture failure. The stream has already
+    /// stopped, so capture teardown is best-effort; finalizing the recorder
+    /// preserves the audio captured before the failure as a playable file.
+    func finalizeAfterFailure() async {
+        try? await captureManager.stopCapture()
+        try? audioRecorder.stopRecording()   // finalizes the partial WAV
+        await captureManager.cleanup()
+        audioRecorder.onWaveformData = nil
+        currentRecordingURL = nil
+        Log.recorder.error("Recording finalized after stream failure")
     }
 
     /// Check if currently recording

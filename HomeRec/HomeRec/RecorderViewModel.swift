@@ -45,6 +45,9 @@ class RecorderViewModel: ObservableObject {
         self.controller = controller ?? RecordingController()
         self.permissions = permissions ?? PermissionManager()
         self.clock = clock ?? SystemDurationClock()
+        self.controller.onStreamError = { [weak self] message in
+            self?.handleStreamFailure(message)
+        }
         Task {
             await checkPermission()
         }
@@ -152,6 +155,19 @@ class RecorderViewModel: ObservableObject {
     }
 
     // MARK: - Private Methods
+
+    /// Handle an unexpected capture-stream failure mid-recording: surface the
+    /// error state immediately, then finalize the partial recording so the
+    /// audio captured before the failure is preserved.
+    private func handleStreamFailure(_ message: String) {
+        guard state == .recording else { return }
+        stopTimer()
+        waveformSamples = Array(repeating: 0, count: 200)
+        transition(to: .error(.streamFailed(message)))
+        Task { [weak self] in
+            await self?.controller.finalizeAfterFailure()
+        }
+    }
 
     /// Apply a state transition, rejecting illegal ones. Surfaces the alert when
     /// entering an error state.

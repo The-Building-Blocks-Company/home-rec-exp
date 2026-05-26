@@ -71,7 +71,10 @@ class AudioRecorder: AudioFileWriting {
     func startRecording(to fileURL: URL) throws {
         let writer = WAVWriter()
         try writer.createFile(at: fileURL, sampleRate: sampleRate, channels: channels)
-        self.wavWriter = writer
+
+        // Confine the writer to the processing queue: capture and stop threads
+        // must never touch `wavWriter` directly, so there's no cross-thread race.
+        processingQueue.sync { self.wavWriter = writer }
 
         Log.recorder.debug("AudioRecorder started: \(fileURL.path, privacy: .private)")
     }
@@ -79,24 +82,23 @@ class AudioRecorder: AudioFileWriting {
     /// Process audio sample from ScreenCaptureKit
     /// - Parameter sampleBuffer: Audio sample from SCStream
     func processAudioSample(_ sampleBuffer: CMSampleBuffer) {
-        guard wavWriter != nil else { return }
-
-        // Process on background queue to avoid blocking capture
+        // Hand off to the serial queue immediately. `wavWriter` is only ever read
+        // there, so a concurrent stop cannot free it mid-read.
         processingQueue.async { [weak self] in
-            self?.processSampleBuffer(sampleBuffer)
+            guard let self, self.wavWriter != nil else { return }
+            self.processSampleBuffer(sampleBuffer)
         }
     }
 
     /// Stop recording
     /// - Throws: AudioRecorderError if stop fails
     func stopRecording() throws {
-        guard wavWriter != nil else {
-            throw AudioRecorderError.notRecording
-        }
-
-        // Wait for processing queue to finish
-        processingQueue.sync {
-            // Finalize WAV file
+        // Runs on the processing queue *after* all in-flight buffers (FIFO), so no
+        // trailing audio is dropped and the writer is finalized exactly once.
+        try processingQueue.sync {
+            guard wavWriter != nil else {
+                throw AudioRecorderError.notRecording
+            }
             try? wavWriter?.finalize()
             wavWriter = nil
         }
@@ -104,7 +106,7 @@ class AudioRecorder: AudioFileWriting {
 
     /// Whether the recorder is currently writing to a file.
     var recording: Bool {
-        return wavWriter != nil
+        processingQueue.sync { wavWriter != nil }
     }
 
     // MARK: - Private Methods

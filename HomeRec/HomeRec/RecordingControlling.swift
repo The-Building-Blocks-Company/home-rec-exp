@@ -12,8 +12,13 @@ import Foundation
 @MainActor
 protocol RecordingControlling: AnyObject {
     var onWaveformData: (([Float]) -> Void)? { get set }
+    /// Called when the underlying capture stream fails unexpectedly mid-recording.
+    var onStreamError: (@MainActor (String) -> Void)? { get set }
     var isRecording: Bool { get }
     var recordingURL: URL? { get }
     func startRecording() async throws -> URL
     func stopRecording() async throws
+    /// Finalize after an unexpected capture failure: best-effort capture teardown
+    /// plus finalizing the partial recording so captured audio is preserved.
+    func finalizeAfterFailure() async
 }
