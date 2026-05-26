@@ -8,6 +8,11 @@
 import Foundation
 import os
 
+/// Errors originating from the recording controller before/around capture.
+enum RecordingControllerError: Error {
+    case insufficientDiskSpace
+}
+
 /// Controller that coordinates audio recording workflow
 class RecordingController: RecordingControlling {
 
@@ -46,6 +51,12 @@ class RecordingController: RecordingControlling {
     func startRecording() async throws -> URL {
         // Generate file path
         let fileURL = generateFilePath()
+
+        // Refuse to start a doomed recording on a near-full disk.
+        if let available = DiskSpace.availableBytes(at: fileURL),
+           !DiskSpace.hasEnoughSpace(availableBytes: available) {
+            throw RecordingControllerError.insufficientDiskSpace
+        }
 
         // Wire waveform callback
         audioRecorder.onWaveformData = onWaveformData

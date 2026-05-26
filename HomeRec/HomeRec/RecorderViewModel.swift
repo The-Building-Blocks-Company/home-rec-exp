@@ -24,6 +24,8 @@ class RecorderViewModel: ObservableObject {
     @Published var showError = false
     /// A recovery action to offer alongside the current error, if any.
     @Published var recoverySuggestion: RecoverySuggestion?
+    /// Set once a recording passes the long-recording threshold.
+    @Published var showLongRecordingWarning = false
     @Published var lastRecordingURL: URL?
     @Published var permissionStatus: PermissionStatus = .notDetermined
     @Published var waveformSamples: [Float] = Array(repeating: 0, count: 200)
@@ -37,6 +39,7 @@ class RecorderViewModel: ObservableObject {
     private let permissions: PermissionProviding
     private let clock: DurationClock
     private var recordingStartTime: Date?
+    private var longRecordingWarned = false
     private var activationObserver: NSObjectProtocol?
 
     // MARK: - Initialization
@@ -119,12 +122,16 @@ class RecorderViewModel: ObservableObject {
             lastRecordingURL = fileURL
             recordingStartTime = clock.now
             duration = 0
+            longRecordingWarned = false
 
             transition(to: .recording)
 
             // Start duration timer
             startTimer()
 
+        } catch RecordingControllerError.insufficientDiskSpace {
+            Log.recorder.error("Refusing to record: insufficient disk space")
+            transition(to: .error(.diskFull))
         } catch {
             Log.recorder.error("Failed to start recording: \(error.localizedDescription, privacy: .public)")
             transition(to: .error(.startFailed(error.localizedDescription)))
@@ -209,6 +216,10 @@ class RecorderViewModel: ObservableObject {
         clock.startTicking(every: 0.1) { [weak self] in
             guard let self, let startTime = self.recordingStartTime else { return }
             self.duration = self.clock.now.timeIntervalSince(startTime)
+            if !self.longRecordingWarned && self.duration >= DiskSpace.longRecordingThreshold {
+                self.longRecordingWarned = true
+                self.showLongRecordingWarning = true
+            }
         }
     }
 

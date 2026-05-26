@@ -149,6 +149,37 @@ struct RecorderViewModelTests {
         #expect(clock.isTicking == false)
     }
 
+    @Test("Disk-space threshold logic")
+    func diskSpaceThreshold() {
+        #expect(DiskSpace.hasEnoughSpace(availableBytes: DiskSpace.minimumBytesToRecord))
+        #expect(DiskSpace.hasEnoughSpace(availableBytes: DiskSpace.minimumBytesToRecord - 1) == false)
+        #expect(DiskSpace.hasEnoughSpace(availableBytes: 10 * 1024 * 1024) == false)
+    }
+
+    @Test("Insufficient disk space surfaces a disk-full error, not a generic one")
+    func insufficientDiskSpaceSurfacesDiskFull() async {
+        let controller = MockRecordingControlling()
+        controller.startError = RecordingControllerError.insufficientDiskSpace
+        let viewModel = makeViewModel(controller: controller)
+
+        await viewModel.startRecording()
+
+        #expect(viewModel.state == .error(.diskFull))
+        #expect(viewModel.errorMessage == RecorderError.diskFull.message)
+    }
+
+    @Test("A long recording triggers a one-time warning once past the threshold")
+    func longRecordingWarning() async {
+        let clock = ManualClock()
+        let viewModel = makeViewModel(clock: clock)
+
+        await viewModel.startRecording()
+        #expect(viewModel.showLongRecordingWarning == false)
+
+        clock.advance(by: DiskSpace.longRecordingThreshold + 1)
+        #expect(viewModel.showLongRecordingWarning)
+    }
+
     @Test("Stream-failure callback transitions to .error and finalizes once")
     func streamFailureHandled() async {
         let controller = MockRecordingControlling()

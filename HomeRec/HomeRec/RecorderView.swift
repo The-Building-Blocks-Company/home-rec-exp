@@ -117,6 +117,16 @@ struct RecorderView: View {
                 Text(errorMessage)
             }
         }
+        .alert("Still recording", isPresented: $viewModel.showLongRecordingWarning) {
+            Button("Keep Recording", role: .cancel) {
+                viewModel.showLongRecordingWarning = false
+            }
+            Button("Stop") {
+                Task { await viewModel.stopRecording() }
+            }
+        } message: {
+            Text("You've been recording for a while. Long recordings use a lot of disk space — about 10 MB per minute.")
+        }
         .onAppear {
             Task {
                 await viewModel.checkPermission()
