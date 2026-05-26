@@ -138,6 +138,22 @@ struct MenuBarPopoverView: View {
                 .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
                 .foregroundColor(.secondary)
             }
+
+            // Help row
+            HStack {
+                Button("Export Diagnostics…") {
+                    Diagnostics.exportReport()
+                }
+
+                Spacer()
+
+                Button("Report a Problem") {
+                    Diagnostics.reportProblem()
+                }
+            }
+            .buttonStyle(.borderless)
+            .font(.custom("Inter-Regular", size: 11, relativeTo: .caption))
+            .foregroundColor(.secondary)
         }
         .padding(16)
         .frame(width: 280)

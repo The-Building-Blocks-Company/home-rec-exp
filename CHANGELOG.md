@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Diagnostics export + "Report a Problem"** — A menu-bar action gathers recent `os.Logger` entries (via `OSLogStore`) plus app/macOS version into a shareable text file (saved via a save panel), and "Report a Problem" opens a prefilled GitHub issue with version info — replacing the old hunt-for-a-Desktop-log workflow. (BL-042)
 - **Human-readable errors with recovery actions** — Error states now show plain-language messages (no raw system error strings) plus a concrete next step where one exists: stream failures offer "Open Settings", start failures offer "Try Again". Shown in the main window alert and inline in the menu bar popover. Technical detail is retained for logs/diagnostics only. (BL-044)
 - **Live permission re-detection** — The app now re-probes Screen Recording permission whenever it regains focus (`NSApplication.didBecomeActiveNotification`), so granting permission in System Settings takes effect immediately — no quit-and-relaunch. Previously the #1 first-run failure: users granted permission, returned, clicked Record, and nothing happened. (BL-040)
 - **Stream-failure detection & recovery** — When the capture stream stops unexpectedly (permission revoked, display sleep, another capturer), the failure now propagates from `ScreenCaptureAudioManager` → `RecordingController` → `RecorderViewModel`, which transitions to `.error` and **finalizes the partial WAV** so audio captured before the failure is preserved and playable. Previously the UI kept showing "Recording" while nothing was written. (BL-020)
@@ -48,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `ScreenCaptureAudioManager.swift` | Conforms to `AudioCapturing` (BL-003); publishes `onStreamError` on `didStopWithError` (BL-020) |
 | `RecordingState.swift` | New — `RecordingState` + `RecorderError` (+ `streamFailed`, BL-020; plain `message`/`detail`/`recovery` + `RecoverySuggestion`, BL-044) + transition rules (BL-006) |
 | `RecorderView.swift`, `MenuBarPopoverView.swift` | Error alert/inline error use recovery actions (BL-044) |
+| `Diagnostics.swift` | New — diagnostics report (OSLogStore) + export panel + Report-a-Problem URL (BL-042) |
+| `MenuBarPopoverView.swift` | Help row: Export Diagnostics… / Report a Problem (BL-042) |
 | `RecorderViewModel.swift` | Owns `RecordingState`; transitions + state-derived `isRecording`/`statusText` (BL-006); `handleStreamFailure` wiring (BL-020); re-probes permission on app activation (BL-040) |
 | `MenuBarController.swift` | Observes `$state` (mapped to recording) instead of `$isRecording` (BL-006) |
 | `WAVWriter.swift` | `WAVWriterError` made `Equatable` (BL-004); periodic in-place header rewrite for crash safety (BL-022) |
