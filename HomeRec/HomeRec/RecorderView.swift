@@ -103,14 +103,14 @@ struct RecorderView: View {
         }
         .padding(40)
         .frame(width: 450, height: 450)
-        .alert("Error", isPresented: $viewModel.showError) {
-            Button("OK") {
-                viewModel.showError = false
-            }
-            if viewModel.permissionStatus == .denied {
-                Button("Open Settings") {
-                    viewModel.openSystemSettings()
+        .alert("Something went wrong", isPresented: $viewModel.showError) {
+            if let recovery = viewModel.recoverySuggestion {
+                Button(recovery.label) {
+                    viewModel.performRecovery()
                 }
+            }
+            Button("OK", role: .cancel) {
+                viewModel.showError = false
             }
         } message: {
             if let errorMessage = viewModel.errorMessage {

@@ -97,7 +97,7 @@ struct RecorderViewModelTests {
         #expect(viewModel.waveformSamples == Array(repeating: 0, count: 200))
     }
 
-    @Test("A controller start error transitions to .error with a message")
+    @Test("A controller start error transitions to .error with plain copy + recovery")
     func startErrorSurfacesErrorState() async {
         let controller = MockRecordingControlling()
         controller.startError = TestError(message: "no capture device")
@@ -106,8 +106,28 @@ struct RecorderViewModelTests {
         await viewModel.startRecording()
 
         #expect(viewModel.state == .error(.startFailed("no capture device")))
-        #expect(viewModel.errorMessage == "Failed to start recording: no capture device")
+        // User-facing copy is plain language and does not leak the raw detail.
+        #expect(viewModel.errorMessage == RecorderError.startFailed("no capture device").message)
+        #expect(viewModel.errorMessage?.contains("no capture device") == false)
+        #expect(viewModel.recoverySuggestion == .tryAgain)
         #expect(viewModel.showError)
+    }
+
+    @Test("Recovery action .openSettings opens System Settings and dismisses the error")
+    func recoveryOpensSettings() async {
+        let controller = MockRecordingControlling()
+        let permission = MockPermissionProviding(.granted)
+        let viewModel = RecorderViewModel(controller: controller, permissions: permission, clock: ManualClock())
+
+        await viewModel.startRecording()
+        controller.emitStreamError("permission turned off")
+        #expect(viewModel.recoverySuggestion == .openSettings)
+        #expect(viewModel.showError)
+
+        viewModel.performRecovery()
+
+        #expect(permission.openSettingsCount == 1)
+        #expect(viewModel.showError == false)
     }
 
     @Test("Duration advances using the injected clock, not a real timer")

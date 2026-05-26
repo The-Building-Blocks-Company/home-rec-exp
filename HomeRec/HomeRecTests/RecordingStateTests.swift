@@ -63,9 +63,23 @@ struct RecordingStateTests {
         #expect(errorState.canTransition(to: .recording) == false)
     }
 
-    @Test("RecorderError produces a user-facing message")
-    func errorMessages() {
-        #expect(RecorderError.startFailed("disk full").message == "Failed to start recording: disk full")
-        #expect(RecorderError.stopFailed("io error").message == "Failed to stop recording: io error")
+    @Test("RecorderError exposes plain-language messages without leaking technical detail")
+    func errorMessagesArePlainLanguage() {
+        let start = RecorderError.startFailed("ECONNREFUSED 0x80010001")
+        // The raw detail must not appear in the user-facing message…
+        #expect(start.message.contains("ECONNREFUSED") == false)
+        // …but is retained for logs/diagnostics.
+        #expect(start.detail == "ECONNREFUSED 0x80010001")
+        #expect(start.message.isEmpty == false)
+    }
+
+    @Test("RecorderError maps to the right recovery action")
+    func errorRecoveryMapping() {
+        #expect(RecorderError.startFailed("x").recovery == .tryAgain)
+        #expect(RecorderError.streamFailed("x").recovery == .openSettings)
+        #expect(RecorderError.stopFailed("x").recovery == nil)
+        #expect(RecorderError.diskFull.recovery == nil)
+        #expect(RecoverySuggestion.openSettings.label == "Open Settings")
+        #expect(RecoverySuggestion.tryAgain.label == "Try Again")
     }
 }

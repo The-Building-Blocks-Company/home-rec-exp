@@ -22,6 +22,8 @@ class RecorderViewModel: ObservableObject {
     @Published var duration: TimeInterval = 0
     @Published var errorMessage: String?
     @Published var showError = false
+    /// A recovery action to offer alongside the current error, if any.
+    @Published var recoverySuggestion: RecoverySuggestion?
     @Published var lastRecordingURL: URL?
     @Published var permissionStatus: PermissionStatus = .notDetermined
     @Published var waveformSamples: [Float] = Array(repeating: 0, count: 200)
@@ -83,7 +85,10 @@ class RecorderViewModel: ObservableObject {
         permissionStatus = granted ? .granted : .denied
 
         if !granted {
-            showError(message: "Screen Recording permission is required to record system audio. Please grant permission in System Settings.")
+            presentError(
+                "Home Rec needs Screen Recording permission to capture audio (it never records your screen). You can turn it on in System Settings.",
+                recovery: .openSettings
+            )
         }
     }
 
@@ -195,7 +200,7 @@ class RecorderViewModel: ObservableObject {
         }
         state = next
         if case .error(let recorderError) = next {
-            showError(message: recorderError.message)
+            presentError(recorderError.message, recovery: recorderError.recovery)
         }
     }
 
@@ -212,10 +217,25 @@ class RecorderViewModel: ObservableObject {
         clock.stopTicking()
     }
 
-    /// Show error message
-    private func showError(message: String) {
+    /// Present a user-facing error with optional recovery action.
+    private func presentError(_ message: String, recovery: RecoverySuggestion?) {
         errorMessage = message
+        recoverySuggestion = recovery
         showError = true
+    }
+
+    /// Perform the current error's recovery action (from the alert button).
+    func performRecovery() {
+        let suggestion = recoverySuggestion
+        showError = false
+        switch suggestion {
+        case .openSettings:
+            openSystemSettings()
+        case .tryAgain:
+            Task { await startRecording() }
+        case nil:
+            break
+        }
     }
 
     // MARK: - Computed Properties

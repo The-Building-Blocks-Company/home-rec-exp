@@ -42,6 +42,23 @@ struct MenuBarPopoverView: View {
                 }
             }
 
+            // Inline error with recovery action
+            if case .error = viewModel.state, let message = viewModel.errorMessage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(message)
+                        .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let recovery = viewModel.recoverySuggestion {
+                        Button(recovery.label) {
+                            viewModel.performRecovery()
+                        }
+                        .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
+                    }
+                }
+            }
+
             // Mini waveform (only while recording)
             if viewModel.isRecording {
                 WaveformView(samples: viewModel.waveformSamples)

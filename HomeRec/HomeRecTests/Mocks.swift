@@ -72,6 +72,7 @@ final class MockAudioFileWriting: AudioFileWriting {
 @MainActor
 final class MockPermissionProviding: PermissionProviding {
     var status: PermissionStatus
+    private(set) var openSettingsCount = 0
 
     init(_ status: PermissionStatus = .granted) {
         self.status = status
@@ -79,7 +80,7 @@ final class MockPermissionProviding: PermissionProviding {
 
     func checkPermission() async -> PermissionStatus { status }
     func requestPermission() async -> Bool { status == .granted }
-    func openSystemPreferences() {}
+    func openSystemPreferences() { openSettingsCount += 1 }
 }
 
 @MainActor

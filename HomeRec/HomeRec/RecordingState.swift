@@ -10,21 +10,59 @@
 import Foundation
 
 /// A recoverable failure surfaced to the user during recording.
-/// Richer copy and recovery actions are handled separately.
 enum RecorderError: Error, Equatable, Sendable {
     case startFailed(String)
     case stopFailed(String)
     case streamFailed(String)
+    case diskFull
 
-    /// User-facing message describing the failure.
+    /// The underlying technical detail (e.g. a system error description).
+    /// Retained for logs/diagnostics — never shown directly to the user.
+    nonisolated var detail: String {
+        switch self {
+        case .startFailed(let detail), .stopFailed(let detail), .streamFailed(let detail):
+            return detail
+        case .diskFull:
+            return "insufficient free disk space"
+        }
+    }
+
+    /// Plain-language, non-technical message shown to the user.
     nonisolated var message: String {
         switch self {
-        case .startFailed(let detail):
-            return "Failed to start recording: \(detail)"
-        case .stopFailed(let detail):
-            return "Failed to stop recording: \(detail)"
-        case .streamFailed(let detail):
-            return "Recording stopped unexpectedly: \(detail)"
+        case .startFailed:
+            return "Home Rec couldn't start recording. Make sure some audio is playing, then try again."
+        case .stopFailed:
+            return "Home Rec couldn't finish saving the recording. The audio captured so far may still be on your Desktop."
+        case .streamFailed:
+            return "Recording stopped unexpectedly. This usually means Screen Recording permission was turned off, or another app took over audio capture."
+        case .diskFull:
+            return "There isn't enough free space to start recording. Free up some disk space and try again."
+        }
+    }
+
+    /// A suggested next step the user can take, if any.
+    nonisolated var recovery: RecoverySuggestion? {
+        switch self {
+        case .startFailed:
+            return .tryAgain
+        case .streamFailed:
+            return .openSettings
+        case .stopFailed, .diskFull:
+            return nil
+        }
+    }
+}
+
+/// A concrete recovery action offered alongside an error.
+enum RecoverySuggestion: Equatable, Sendable {
+    case openSettings
+    case tryAgain
+
+    nonisolated var label: String {
+        switch self {
+        case .openSettings: return "Open Settings"
+        case .tryAgain: return "Try Again"
         }
     }
 }

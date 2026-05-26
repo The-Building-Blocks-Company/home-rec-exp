@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Human-readable errors with recovery actions** — Error states now show plain-language messages (no raw system error strings) plus a concrete next step where one exists: stream failures offer "Open Settings", start failures offer "Try Again". Shown in the main window alert and inline in the menu bar popover. Technical detail is retained for logs/diagnostics only. (BL-044)
 - **Live permission re-detection** — The app now re-probes Screen Recording permission whenever it regains focus (`NSApplication.didBecomeActiveNotification`), so granting permission in System Settings takes effect immediately — no quit-and-relaunch. Previously the #1 first-run failure: users granted permission, returned, clicked Record, and nothing happened. (BL-040)
 - **Stream-failure detection & recovery** — When the capture stream stops unexpectedly (permission revoked, display sleep, another capturer), the failure now propagates from `ScreenCaptureAudioManager` → `RecordingController` → `RecorderViewModel`, which transitions to `.error` and **finalizes the partial WAV** so audio captured before the failure is preserved and playable. Previously the UI kept showing "Recording" while nothing was written. (BL-020)
 - **`RecordingState` state machine** — A single source of truth for the recording lifecycle (`idle`/`starting`/`recording`/`stopping`/`error`/`recovering`), owned by `RecorderViewModel`. Illegal transitions (e.g. `idle → stopping`) are rejected by `canTransition(to:)`, making "UI shows recording while nothing is written" unrepresentable. (BL-006)
@@ -45,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `RecordingController.swift` | Conforms to `RecordingControlling`; injects `AudioCapturing`/`AudioFileWriting` (BL-003) |
 | `AudioRecorder.swift` | Conforms to `AudioFileWriting`; removed redundant `deinit` (BL-003); dropped standalone `isRecording` flag, derive from writer (BL-006); confined writer access to the serial queue (BL-024) |
 | `ScreenCaptureAudioManager.swift` | Conforms to `AudioCapturing` (BL-003); publishes `onStreamError` on `didStopWithError` (BL-020) |
-| `RecordingState.swift` | New — `RecordingState` + `RecorderError` (+ `streamFailed`, BL-020) + transition rules (BL-006) |
+| `RecordingState.swift` | New — `RecordingState` + `RecorderError` (+ `streamFailed`, BL-020; plain `message`/`detail`/`recovery` + `RecoverySuggestion`, BL-044) + transition rules (BL-006) |
+| `RecorderView.swift`, `MenuBarPopoverView.swift` | Error alert/inline error use recovery actions (BL-044) |
 | `RecorderViewModel.swift` | Owns `RecordingState`; transitions + state-derived `isRecording`/`statusText` (BL-006); `handleStreamFailure` wiring (BL-020); re-probes permission on app activation (BL-040) |
 | `MenuBarController.swift` | Observes `$state` (mapped to recording) instead of `$isRecording` (BL-006) |
 | `WAVWriter.swift` | `WAVWriterError` made `Equatable` (BL-004); periodic in-place header rewrite for crash safety (BL-022) |
