@@ -93,6 +93,19 @@ enum SampleBufferFixtures {
             flags: 0,
             bufferList: pcm.audioBufferList
         )
+
+        // The block buffer above *references* `pcm`'s memory rather than copying it,
+        // so `pcm` must outlive the CMSampleBuffer. As a transient local it would
+        // otherwise deallocate on return, leaving the sample buffer pointing at freed
+        // memory — a use-after-free that survives by luck normally but crashes under
+        // Thread Sanitizer (objc_release in the full-suite run). Pin its lifetime to
+        // the sample buffer via an attachment, which retains it until the buffer dies.
+        CMSetAttachment(
+            sampleBuffer!,
+            key: "HomeRecBackingPCMBuffer" as CFString,
+            value: pcm,
+            attachmentMode: kCMAttachmentMode_ShouldNotPropagate
+        )
         return sampleBuffer!
     }
 
