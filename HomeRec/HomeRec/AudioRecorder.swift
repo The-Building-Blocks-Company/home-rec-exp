@@ -111,141 +111,24 @@ class AudioRecorder: AudioFileWriting {
 
     // MARK: - Private Methods
 
-    /// Process sample buffer on background thread
+    /// Process sample buffer on background thread (orchestrator).
     /// - Parameter sampleBuffer: CMSampleBuffer from ScreenCaptureKit
     private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        // No logging in this method: it runs per audio buffer (~47×/sec) on the
-        // processing queue. Failures return early; durable error propagation is
-        // handled on the stream-failure path, not by logging the hot path.
+        // Runs ~47×/sec on the processing queue. No logging on this hot path;
+        // failures drop the buffer. Conversion + downsampling are extracted into
+        // `nonisolated` units (BL-007); the write stays in WAVWriter (BL-011 seam).
         guard let wavWriter = wavWriter else { return }
+        guard let pcmBuffer = AudioSampleConverter.makePCMBuffer(from: sampleBuffer) else { return }
 
-        // Get format description
-        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else {
-            return
-        }
-
-        // Get audio stream description
-        guard let streamDesc = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else {
-            return
-        }
-
-        // Create AVAudioFormat from stream description
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: streamDesc.pointee.mSampleRate,
-            channels: AVAudioChannelCount(streamDesc.pointee.mChannelsPerFrame),
-            interleaved: false
-        ) else {
-            return
-        }
-
-        // Get number of frames
-        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
-        guard frameCount > 0 else { return }
-
-        // Create PCM buffer
-        guard let pcmBuffer = AVAudioPCMBuffer(
-            pcmFormat: format,
-            frameCapacity: AVAudioFrameCount(frameCount)
-        ) else {
-            return
-        }
-
-        pcmBuffer.frameLength = AVAudioFrameCount(frameCount)
-
-        // Get audio buffer list from sample buffer
-
-        // First, query the required size
-        var requiredSize: Int = 0
-        var status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sampleBuffer,
-            bufferListSizeNeededOut: &requiredSize,
-            bufferListOut: nil,
-            bufferListSize: 0,
-            blockBufferAllocator: nil,
-            blockBufferMemoryAllocator: nil,
-            flags: 0,
-            blockBufferOut: nil
-        )
-
-        guard status == noErr else { return }
-
-        // Allocate the audio buffer list with the correct size
-        let audioBufferListPtr = UnsafeMutableRawPointer.allocate(
-            byteCount: requiredSize,
-            alignment: MemoryLayout<AudioBufferList>.alignment
-        )
-        defer { audioBufferListPtr.deallocate() }
-
-        var blockBuffer: CMBlockBuffer?
-        status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sampleBuffer,
-            bufferListSizeNeededOut: nil,
-            bufferListOut: audioBufferListPtr.assumingMemoryBound(to: AudioBufferList.self),
-            bufferListSize: requiredSize,
-            blockBufferAllocator: nil,
-            blockBufferMemoryAllocator: nil,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        )
-
-        guard status == noErr else { return }
-        defer { blockBuffer = nil }
-
-        let audioBufferListPointer = UnsafeMutableAudioBufferListPointer(audioBufferListPtr.assumingMemoryBound(to: AudioBufferList.self))
-
-        // Copy audio data to PCM buffer
-        guard let floatChannelData = pcmBuffer.floatChannelData else { return }
-
-        let channelCount = Int(streamDesc.pointee.mChannelsPerFrame)
-        let isInterleaved = (streamDesc.pointee.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0
-
-        if isInterleaved {
-            // Deinterleave audio data
-            if let buffer = audioBufferListPointer.first,
-               let srcData = buffer.mData?.assumingMemoryBound(to: Float.self) {
-
-                for frame in 0..<frameCount {
-                    for channel in 0..<channelCount {
-                        let srcIndex = frame * channelCount + channel
-                        floatChannelData[channel][frame] = srcData[srcIndex]
-                    }
-                }
-            } else {
-                return
-            }
-        } else {
-            // Non-interleaved (already separated by channel)
-            for channel in 0..<min(channelCount, audioBufferListPointer.count) {
-                if let srcData = audioBufferListPointer[channel].mData?.assumingMemoryBound(to: Float.self) {
-                    floatChannelData[channel].update(from: srcData, count: frameCount)
-                }
-            }
-        }
-
-        // Extract waveform data for visualization
+        // Waveform visualization (skip the work entirely when nothing is listening).
         if let onWaveformData = onWaveformData {
-            let targetSamples = 200
-            let step = max(1, frameCount / targetSamples)
-            var waveformSamples: [Float] = []
-            waveformSamples.reserveCapacity(targetSamples)
-
-            for i in stride(from: 0, to: frameCount, by: step) {
-                var sample: Float = 0
-                for ch in 0..<channelCount {
-                    sample += floatChannelData[ch][i]
-                }
-                sample /= Float(channelCount)
-                waveformSamples.append(sample)
-            }
-
+            let waveformSamples = WaveformDownsampler.downsample(pcmBuffer)
             DispatchQueue.main.async {
                 onWaveformData(waveformSamples)
             }
         }
 
-        // Write to WAV file. Errors are intentionally not logged here (hot path);
-        // surfacing write failures to the user is handled separately.
+        // Write to WAV. Errors intentionally not logged here (hot path).
         try? wavWriter.writeBuffer(pcmBuffer)
     }
 }
