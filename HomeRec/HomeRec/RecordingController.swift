@@ -22,6 +22,10 @@ class RecordingController: RecordingControlling {
     private let audioRecorder: AudioFileWriting
     private let saveLocation: SaveLocationProviding
 
+    /// Output format for new recordings. WAV today; BL-015 will make this
+    /// user-selectable and thread the choice into `AudioRecorder` too.
+    private let recordingFormat: AudioFormat = .wav
+
     private var currentRecordingURL: URL?
 
     /// Callback for waveform visualization data
@@ -132,12 +136,13 @@ class RecordingController: RecordingControlling {
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
         let base = "recording_\(timestamp)"
+        let ext = recordingFormat.fileExtension
 
         // Avoid clobbering an existing file (timestamps are second-granular).
-        var candidate = directory.appendingPathComponent("\(base).wav")
+        var candidate = directory.appendingPathComponent("\(base).\(ext)")
         var suffix = 1
         while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = directory.appendingPathComponent("\(base) (\(suffix)).wav")
+            candidate = directory.appendingPathComponent("\(base) (\(suffix)).\(ext)")
             suffix += 1
         }
         return candidate

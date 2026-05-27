@@ -51,7 +51,8 @@ struct GoldenFileTests {
         return bytes
     }
 
-    private func recordedPCMBytes(interleaved: Bool) throws -> [UInt8] {
+    /// The full recorded file (header + data).
+    private func recordedBytes(interleaved: Bool) throws -> [UInt8] {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -65,8 +66,11 @@ struct GoldenFileTests {
         }
         try recorder.stopRecording()   // drains the queue, then finalizes
 
-        let all = [UInt8](try Data(contentsOf: url))
-        return Array(all[44...])   // strip the 44-byte header
+        return [UInt8](try Data(contentsOf: url))
+    }
+
+    private func recordedPCMBytes(interleaved: Bool) throws -> [UInt8] {
+        Array(try recordedBytes(interleaved: interleaved)[44...])   // strip the 44-byte header
     }
 
     @Test("Interleaved input → expected WAV PCM bytes (golden)")
@@ -77,5 +81,32 @@ struct GoldenFileTests {
     @Test("Non-interleaved input → identical WAV PCM bytes")
     func goldenNonInterleaved() throws {
         #expect(try recordedPCMBytes(interleaved: false) == expectedPCMBytes())
+    }
+
+    @Test("WAV header is the expected 48kHz stereo PCM header (unchanged by the encoder seam)")
+    func goldenHeader() throws {
+        let bytes = try recordedBytes(interleaved: true)
+        #expect(bytes.count >= 44)
+
+        func u32(_ o: Int) -> UInt32 {
+            UInt32(bytes[o]) | (UInt32(bytes[o + 1]) << 8) | (UInt32(bytes[o + 2]) << 16) | (UInt32(bytes[o + 3]) << 24)
+        }
+        func u16(_ o: Int) -> UInt16 { UInt16(bytes[o]) | (UInt16(bytes[o + 1]) << 8) }
+        func ascii(_ r: Range<Int>) -> String { String(bytes: bytes[r], encoding: .ascii) ?? "" }
+
+        let dataSize = UInt32(bufferCount * framesPerBuffer * channels * 2)
+        #expect(ascii(0..<4) == "RIFF")
+        #expect(u32(4) == 36 + dataSize)
+        #expect(ascii(8..<12) == "WAVE")
+        #expect(ascii(12..<16) == "fmt ")
+        #expect(u32(16) == 16)              // fmt chunk size
+        #expect(u16(20) == 1)               // PCM
+        #expect(u16(22) == 2)               // channels
+        #expect(u32(24) == 48000)           // sample rate
+        #expect(u32(28) == 48000 * 2 * 2)   // byte rate
+        #expect(u16(32) == 4)               // block align
+        #expect(u16(34) == 16)              // bits per sample
+        #expect(ascii(36..<40) == "data")
+        #expect(u32(40) == dataSize)
     }
 }

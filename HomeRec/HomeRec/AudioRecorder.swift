@@ -49,7 +49,7 @@ class AudioRecorder: AudioFileWriting {
 
     // MARK: - Properties
 
-    private var wavWriter: WAVWriter?
+    private var encoder: (any AudioFileEncoder)?
 
     private let sampleRate: Double = 48000  // Match ScreenCaptureKit config
     private let channels: Int = 2           // Stereo
@@ -69,12 +69,15 @@ class AudioRecorder: AudioFileWriting {
     /// - Parameter fileURL: URL where WAV file will be saved
     /// - Throws: AudioRecorderError if recording cannot start
     func startRecording(to fileURL: URL) throws {
-        let writer = WAVWriter()
-        try writer.createFile(at: fileURL, sampleRate: sampleRate, channels: channels)
+        // BL-011: pick the encoder by format. WAV today; BL-015 will thread the
+        // user's chosen format down to here. `sampleRate`/`channels` are the
+        // capture (input) format; the encoder owns its own output format.
+        let encoder = try AudioFormat.wav.makeEncoder()
+        try encoder.createFile(at: fileURL, sampleRate: sampleRate, channels: channels)
 
-        // Confine the writer to the processing queue: capture and stop threads
-        // must never touch `wavWriter` directly, so there's no cross-thread race.
-        processingQueue.sync { self.wavWriter = writer }
+        // Confine the encoder to the processing queue: capture and stop threads
+        // must never touch `encoder` directly, so there's no cross-thread race.
+        processingQueue.sync { self.encoder = encoder }
 
         Log.recorder.debug("AudioRecorder started: \(fileURL.path, privacy: .private)")
     }
@@ -85,7 +88,7 @@ class AudioRecorder: AudioFileWriting {
         // Hand off to the serial queue immediately. `wavWriter` is only ever read
         // there, so a concurrent stop cannot free it mid-read.
         processingQueue.async { [weak self] in
-            guard let self, self.wavWriter != nil else { return }
+            guard let self, self.encoder != nil else { return }
             self.processSampleBuffer(sampleBuffer)
         }
     }
@@ -96,17 +99,17 @@ class AudioRecorder: AudioFileWriting {
         // Runs on the processing queue *after* all in-flight buffers (FIFO), so no
         // trailing audio is dropped and the writer is finalized exactly once.
         try processingQueue.sync {
-            guard wavWriter != nil else {
+            guard encoder != nil else {
                 throw AudioRecorderError.notRecording
             }
-            try? wavWriter?.finalize()
-            wavWriter = nil
+            try? encoder?.finalize()
+            encoder = nil
         }
     }
 
     /// Whether the recorder is currently writing to a file.
     var recording: Bool {
-        processingQueue.sync { wavWriter != nil }
+        processingQueue.sync { encoder != nil }
     }
 
     // MARK: - Private Methods
@@ -116,8 +119,9 @@ class AudioRecorder: AudioFileWriting {
     private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
         // Runs ~47×/sec on the processing queue. No logging on this hot path;
         // failures drop the buffer. Conversion + downsampling are extracted into
-        // `nonisolated` units (BL-007); the write stays in WAVWriter (BL-011 seam).
-        guard let wavWriter = wavWriter else { return }
+        // `nonisolated` units (BL-007); the write goes through the format-agnostic
+        // `AudioFileEncoder` seam (BL-011).
+        guard let encoder = encoder else { return }
         guard let pcmBuffer = AudioSampleConverter.makePCMBuffer(from: sampleBuffer) else { return }
 
         // Waveform visualization (skip the work entirely when nothing is listening).
@@ -128,7 +132,7 @@ class AudioRecorder: AudioFileWriting {
             }
         }
 
-        // Write to WAV. Errors intentionally not logged here (hot path).
-        try? wavWriter.writeBuffer(pcmBuffer)
+        // Encode the buffer. Errors intentionally not logged here (hot path).
+        try? encoder.writeBuffer(pcmBuffer)
     }
 }

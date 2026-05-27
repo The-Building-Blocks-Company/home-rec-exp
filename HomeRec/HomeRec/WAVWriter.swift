@@ -42,8 +42,8 @@ enum WAVWriterError: Error, LocalizedError, Equatable {
     }
 }
 
-/// Writes audio data to WAV file
-class WAVWriter {
+/// Writes audio data to WAV file. The `.wav` conformer of `AudioFileEncoder` (BL-011).
+class WAVWriter: AudioFileEncoder {
 
     // MARK: - Properties
 
