@@ -31,12 +31,23 @@ enum AudioFormat: String, CaseIterable, Sendable {
         }
     }
 
-    /// Human-readable name for the format picker (BL-015).
+    /// Full, descriptive name for the format picker's dropdown rows (BL-015),
+    /// where the lossless/lossy distinction is decision-relevant.
     var displayName: String {
         switch self {
         case .wav:  return "WAV (Lossless)"
         case .m4a:  return "M4A (AAC)"
         case .flac: return "FLAC (Lossless)"
+        case .mp3:  return "MP3"
+        }
+    }
+
+    /// Short token for the resting shelf label (BL-015), e.g. "Recording as WAV".
+    var shortName: String {
+        switch self {
+        case .wav:  return "WAV"
+        case .m4a:  return "M4A"
+        case .flac: return "FLAC"
         case .mp3:  return "MP3"
         }
     }

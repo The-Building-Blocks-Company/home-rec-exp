@@ -81,7 +81,7 @@ struct RecorderView: View {
                 .keyboardShortcut("r", modifiers: .command)
 
                 // Reveal in Finder — contextual action, only after a recording.
-                if let _ = viewModel.lastRecordingURL, !viewModel.isRecording {
+                if viewModel.lastRecordingURL != nil, !viewModel.isRecording {
                     Button(action: {
                         viewModel.revealInFinder()
                     }) {
@@ -104,38 +104,57 @@ struct RecorderView: View {
 
             Spacer()
 
-            // Settings shelf (bottom): the save destination is a quiet, native
-            // pop-up, visually separated from the action controls. No folder icon
-            // (reserved for Reveal); a chevron signals the pop-up. Hidden while recording.
+            // Settings shelf (bottom): quiet, native pop-ups, visually separated
+            // from the action controls by a faint divider. Two sibling controls
+            // (save destination + output format) share the ShelfMenu chrome and
+            // sit a touch tighter to each other (6pt) than to the divider (10pt),
+            // so they read as one unit. Hidden entirely while recording — both
+            // settings are locked once capture starts.
             if !viewModel.isRecording {
                 VStack(spacing: 10) {
                     Divider()
                         .frame(width: 300)
                         .opacity(0.15)
 
-                    Menu {
-                        Button("Choose Folder…") {
-                            viewModel.chooseSaveLocation()
-                        }
-                        if viewModel.hasCustomSaveLocation {
-                            Button("Reset to Desktop") {
-                                viewModel.resetSaveLocation()
+                    VStack(spacing: 6) {
+                        // Save destination (BL-010).
+                        ShelfMenu(
+                            title: "Saving to \(viewModel.saveLocationName)",
+                            help: viewModel.saveLocationPath,
+                            accessibilityLabel: "Save location",
+                            accessibilityValue: viewModel.saveLocationName
+                        ) {
+                            Button("Choose Folder…") {
+                                viewModel.chooseSaveLocation()
+                            }
+                            if viewModel.hasCustomSaveLocation {
+                                Button("Reset to Desktop") {
+                                    viewModel.resetSaveLocation()
+                                }
                             }
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("Saving to \(viewModel.saveLocationName)")
-                                .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 9))
+
+                        // Output format (BL-015). Offers only formats with a working
+                        // encoder (`AudioFormat.available`); the active one is checked.
+                        ShelfMenu(
+                            title: "Recording as \(viewModel.selectedFormat.shortName)",
+                            help: "New recordings are saved as \(viewModel.selectedFormat.displayName). This can't change while recording.",
+                            accessibilityLabel: "Recording format",
+                            accessibilityValue: viewModel.selectedFormat.displayName
+                        ) {
+                            ForEach(AudioFormat.available, id: \.self) { format in
+                                Button {
+                                    viewModel.setFormat(format)
+                                } label: {
+                                    if format == viewModel.selectedFormat {
+                                        Label(format.displayName, systemImage: "checkmark")
+                                    } else {
+                                        Text(format.displayName)
+                                    }
+                                }
+                            }
                         }
-                        .foregroundColor(.secondary)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help(viewModel.saveLocationPath)
-                    .accessibilityLabel("Save location, currently \(viewModel.saveLocationName)")
                 }
             }
         }

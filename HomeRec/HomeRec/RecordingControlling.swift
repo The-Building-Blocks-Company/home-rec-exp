@@ -16,7 +16,9 @@ protocol RecordingControlling: AnyObject {
     var onStreamError: (@MainActor (String) -> Void)? { get set }
     var isRecording: Bool { get }
     var recordingURL: URL? { get }
-    func startRecording() async throws -> URL
+    /// Start recording in the given output `format` (BL-015), returning the file URL.
+    /// The format is captured here, at start, and fixed for the recording.
+    func startRecording(format: AudioFormat) async throws -> URL
     func stopRecording() async throws
     /// Finalize after an unexpected capture failure: best-effort capture teardown
     /// plus finalizing the partial recording so captured audio is preserved.

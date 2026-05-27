@@ -66,13 +66,13 @@ class AudioRecorder: AudioFileWriting {
     // MARK: - Public Methods
 
     /// Start recording to file
-    /// - Parameter fileURL: URL where WAV file will be saved
-    /// - Throws: AudioRecorderError if recording cannot start
-    func startRecording(to fileURL: URL) throws {
-        // BL-011: pick the encoder by format. WAV today; BL-015 will thread the
-        // user's chosen format down to here. `sampleRate`/`channels` are the
-        // capture (input) format; the encoder owns its own output format.
-        let encoder = try AudioFormat.wav.makeEncoder()
+    /// - Parameters:
+    ///   - fileURL: destination file; its extension should match `format`.
+    ///   - format: output format whose encoder is created (BL-015). `sampleRate`/
+    ///     `channels` are the capture (input) format; the encoder owns its output.
+    /// - Throws: the format's `makeEncoder()` error, or a file-creation error.
+    func startRecording(to fileURL: URL, format: AudioFormat) throws {
+        let encoder = try format.makeEncoder()
         try encoder.createFile(at: fileURL, sampleRate: sampleRate, channels: channels)
 
         // Confine the encoder to the processing queue: capture and stop threads

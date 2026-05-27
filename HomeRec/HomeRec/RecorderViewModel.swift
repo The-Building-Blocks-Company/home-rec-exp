@@ -36,6 +36,11 @@ class RecorderViewModel: ObservableObject {
     /// Whether a non-default save location is configured (controls the Reset affordance).
     @Published private(set) var hasCustomSaveLocation = false
 
+    /// The output format for new recordings (BL-015). Captured at record start —
+    /// it can't change mid-recording (the shelf is hidden then). Persisted across
+    /// launches; mutate only via `setFormat(_:)`.
+    @Published private(set) var selectedFormat: AudioFormat = .wav
+
     /// Whether a recording is actively capturing. Derived from `state`.
     var isRecording: Bool { state == .recording }
 
@@ -53,6 +58,7 @@ class RecorderViewModel: ObservableObject {
     private var activationObserver: NSObjectProtocol?
     private let defaults: UserDefaults
     private let onboardingCompletedKey = "hasCompletedOnboarding"
+    private let selectedFormatKey = "selectedFormat"
 
     // MARK: - Initialization
 
@@ -70,6 +76,7 @@ class RecorderViewModel: ObservableObject {
         self.clock = clock ?? SystemDurationClock()
         self.defaults = defaults
         self.showOnboarding = !defaults.bool(forKey: onboardingCompletedKey)
+        self.selectedFormat = Self.loadFormat(from: defaults, key: selectedFormatKey)
         self.controller.onStreamError = { [weak self] message in
             self?.handleStreamFailure(message)
         }
@@ -136,8 +143,8 @@ class RecorderViewModel: ObservableObject {
                     self?.waveformSamples = samples
                 }
             }
-            // Start recording
-            let fileURL = try await controller.startRecording()
+            // Start recording in the selected format (captured here, at start).
+            let fileURL = try await controller.startRecording(format: selectedFormat)
             lastRecordingURL = fileURL
             recordingStartTime = clock.now
             duration = 0
@@ -232,6 +239,15 @@ class RecorderViewModel: ObservableObject {
         refreshSaveLocationDisplay()
     }
 
+    /// Select the output format for new recordings and persist the choice (BL-015).
+    /// No-ops for a format that isn't currently available (defensive — the picker
+    /// only offers `AudioFormat.available`).
+    func setFormat(_ format: AudioFormat) {
+        guard AudioFormat.available.contains(format) else { return }
+        selectedFormat = format
+        defaults.set(format.rawValue, forKey: selectedFormatKey)
+    }
+
     /// Mark first-run onboarding complete and dismiss it.
     func completeOnboarding() {
         defaults.set(true, forKey: onboardingCompletedKey)
@@ -315,6 +331,21 @@ class RecorderViewModel: ObservableObject {
     private func refreshSaveLocationDisplay() {
         saveLocationName = saveLocation.configuredDirectory?.lastPathComponent ?? "Desktop"
         hasCustomSaveLocation = saveLocation.configuredDirectory != nil
+    }
+
+    /// Read the persisted format, falling back to `.wav` when the stored value is
+    /// absent, unparseable, or no longer available (e.g. a format was removed, or
+    /// a future build wrote one this build doesn't support). Pure function of its
+    /// inputs so it's safe to call during `init`.
+    private static func loadFormat(from defaults: UserDefaults, key: String) -> AudioFormat {
+        guard
+            let raw = defaults.string(forKey: key),
+            let format = AudioFormat(rawValue: raw),
+            AudioFormat.available.contains(format)
+        else {
+            return .wav
+        }
+        return format
     }
 
     // MARK: - Computed Properties

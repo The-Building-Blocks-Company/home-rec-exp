@@ -96,7 +96,7 @@ struct AudioRecorderTests {
         defer { try? FileManager.default.removeItem(at: url) }
 
         let recorder = AudioRecorder()
-        try recorder.startRecording(to: url)
+        try recorder.startRecording(to: url, format: .wav)
 
         let bufferCount = 50
         let framesPerBuffer = 64
@@ -119,7 +119,7 @@ struct AudioRecorderTests {
             defer { try? FileManager.default.removeItem(at: url) }
 
             let recorder = AudioRecorder()
-            try recorder.startRecording(to: url)
+            try recorder.startRecording(to: url, format: .wav)
             for _ in 0..<buffersPerCycle {
                 recorder.processAudioSample(makeSampleBuffer(frames: framesPerBuffer))
             }

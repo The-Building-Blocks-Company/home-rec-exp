@@ -22,10 +22,6 @@ class RecordingController: RecordingControlling {
     private let audioRecorder: AudioFileWriting
     private let saveLocation: SaveLocationProviding
 
-    /// Output format for new recordings. WAV today; BL-015 will make this
-    /// user-selectable and thread the choice into `AudioRecorder` too.
-    private let recordingFormat: AudioFormat = .wav
-
     private var currentRecordingURL: URL?
 
     /// Callback for waveform visualization data
@@ -51,13 +47,13 @@ class RecordingController: RecordingControlling {
 
     // MARK: - Public Methods
 
-    /// Start recording system audio
+    /// Start recording system audio in the given output `format` (BL-015).
     /// - Returns: URL where the recording is being saved
     /// - Throws: Error if recording cannot start
     @MainActor
-    func startRecording() async throws -> URL {
-        // Generate file path
-        let fileURL = generateFilePath()
+    func startRecording(format: AudioFormat) async throws -> URL {
+        // Generate file path (extension follows the chosen format).
+        let fileURL = generateFilePath(format: format)
 
         // Refuse to start a doomed recording on a near-full disk.
         if let available = DiskSpace.availableBytes(at: fileURL),
@@ -68,8 +64,8 @@ class RecordingController: RecordingControlling {
         // Wire waveform callback
         audioRecorder.onWaveformData = onWaveformData
 
-        // Start audio recorder first (creates WAV file)
-        try audioRecorder.startRecording(to: fileURL)
+        // Start audio recorder first (creates the file in the chosen format).
+        try audioRecorder.startRecording(to: fileURL, format: format)
 
         // Set up capture with audio callback
         let recorder = audioRecorder  // Keep strong reference
@@ -126,17 +122,18 @@ class RecordingController: RecordingControlling {
 
     // MARK: - File path
 
-    /// Generate a unique file path in the resolved save directory.
-    /// `internal` for unit testing. The directory comes from `SaveLocationProviding`,
-    /// which always resolves to a writable folder (falling back to the Desktop).
-    func generateFilePath() -> URL {
+    /// Generate a unique file path in the resolved save directory, with the
+    /// extension for `format` (BL-015). `internal` for unit testing. The directory
+    /// comes from `SaveLocationProviding`, which always resolves to a writable
+    /// folder (falling back to the Desktop).
+    func generateFilePath(format: AudioFormat) -> URL {
         let directory = saveLocation.resolvedDirectory
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
         let base = "recording_\(timestamp)"
-        let ext = recordingFormat.fileExtension
+        let ext = format.fileExtension
 
         // Avoid clobbering an existing file (timestamps are second-granular).
         var candidate = directory.appendingPathComponent("\(base).\(ext)")
