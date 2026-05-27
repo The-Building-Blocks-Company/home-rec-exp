@@ -80,34 +80,25 @@ struct RecorderView: View {
                 .buttonStyle(.plain)
                 .keyboardShortcut("r", modifiers: .command)
 
-                // Reveal in Finder — contextual action, only after a recording,
-                // with a quiet caption naming that file's format (read from its
-                // extension, so it stays truthful even if the selection changed).
-                if let lastURL = viewModel.lastRecordingURL, !viewModel.isRecording {
-                    VStack(spacing: 4) {
-                        Button(action: {
-                            viewModel.revealInFinder()
-                        }) {
-                            HStack {
-                                Image(systemName: "folder")
-                                Text("Reveal in Finder")
-                                    .font(.custom("Inter-Regular", size: 13, relativeTo: .body))
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                            )
+                // Reveal in Finder — contextual action, only after a recording.
+                if viewModel.lastRecordingURL != nil, !viewModel.isRecording {
+                    Button(action: {
+                        viewModel.revealInFinder()
+                    }) {
+                        HStack {
+                            Image(systemName: "folder")
+                            Text("Reveal in Finder")
+                                .font(.custom("Inter-Regular", size: 13, relativeTo: .body))
                         }
-                        .buttonStyle(.plain)
-                        .keyboardShortcut("o", modifiers: .command)
-
-                        Text(lastURL.pathExtension.uppercased())
-                            .font(.custom("Inter-Regular", size: 11, relativeTo: .caption))
-                            .foregroundColor(.secondary.opacity(0.7))
-                            .accessibilityLabel("Last recording format, \(lastURL.pathExtension.uppercased())")
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                        )
                     }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("o", modifiers: .command)
                 }
             }
 
