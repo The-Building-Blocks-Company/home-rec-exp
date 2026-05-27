@@ -27,12 +27,13 @@ set -euo pipefail
 
 PROJECT="HomeRec/HomeRec.xcodeproj"
 SCHEME="HomeRec"
-APP_NAME="HomeRec"
+BUILT_APP_NAME="HomeRec"   # what xcodebuild produces (PRODUCT_NAME / TARGET_NAME)
+APP_NAME="Home Rec"        # user-facing bundle name (drives the Finder/Dock label)
 CONFIG="Release"
 DIST_DIR="$(pwd)/dist"
-ARCHIVE="$DIST_DIR/$APP_NAME.xcarchive"
+ARCHIVE="$DIST_DIR/$BUILT_APP_NAME.xcarchive"
 EXPORT_DIR="$DIST_DIR/export"
-APP="$EXPORT_DIR/$APP_NAME.app"
+APP="$EXPORT_DIR/$APP_NAME.app"   # after the rename below
 DMG="$DIST_DIR/$APP_NAME.dmg"
 
 : "${TEAM_ID:?Set TEAM_ID to your Apple Developer Team ID}"
@@ -74,6 +75,11 @@ xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" \
   -exportPath "$EXPORT_DIR" \
   -exportOptionsPlist "$DIST_DIR/ExportOptions.plist"
+
+# The build product is "HomeRec.app" (PRODUCT_NAME), but the user-facing bundle
+# should be "Home Rec.app" so Finder/Dock show "Home Rec". Renaming a bundle is
+# signature-safe (the signature covers contents, not the enclosing filename).
+mv "$EXPORT_DIR/$BUILT_APP_NAME.app" "$APP"
 
 echo "==> Verifying signature…"
 codesign --verify --deep --strict --verbose=2 "$APP"
