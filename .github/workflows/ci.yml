@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   unit-tests:
-    name: Unit tests (Thread Sanitizer)
+    name: Unit tests
     # NOTE: the runner's Xcode must provide the macOS SDK this project targets.
     # If the image's Xcode is too old, pin a newer one with `xcode-select` below
     # or bump the runner image. See the "Select Xcode" step.
@@ -29,11 +29,29 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Run unit tests
-        # Unit tests only (no TCC/Screen-Recording-dependent UI tests, which can't
-        # run headless). Thread Sanitizer is enabled to catch the audio data races
-        # guarded by BL-024. CODE_SIGNING_ALLOWED=NO avoids needing a signing
-        # identity; if the test host fails to launch, switch to ad-hoc signing:
+      - name: Run unit tests (functional)
+        # Full unit-test suite WITHOUT Thread Sanitizer. This is the functional
+        # gate and the only place the AVAssetWriter-based encoder tests
+        # (M4AEncoderTests) run — see the TSan step below for why they're excluded
+        # there. No TCC/Screen-Recording UI tests (can't run headless).
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project HomeRec/HomeRec.xcodeproj \
+            -scheme HomeRec \
+            -destination 'platform=macOS' \
+            -only-testing:HomeRecTests \
+            -resultBundlePath TestResults-functional.xcresult \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Run unit tests (Thread Sanitizer)
+        # TSan guards OUR audio concurrency (the BL-024 serial-queue handoff).
+        # M4AEncoderTests is skipped: it drives AVAssetWriter's AAC codec, whose
+        # internal worker threads are not built TSan-clean and abort the test host
+        # with SIGABRT on the CI runner (a system-framework issue, not our code;
+        # M4AEncoder holds no cross-thread shared state). Functional coverage of
+        # M4A is provided by the step above. CODE_SIGNING_ALLOWED=NO avoids needing
+        # a signing identity; if the host fails to launch, switch to ad-hoc:
         #   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO
         run: |
           set -o pipefail
@@ -42,6 +60,7 @@ jobs:
             -scheme HomeRec \
             -destination 'platform=macOS' \
             -only-testing:HomeRecTests \
+            -skip-testing:HomeRecTests/M4AEncoderTests \
             -enableThreadSanitizer YES \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO
@@ -51,5 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: TestResults.xcresult
+          path: |
+            TestResults.xcresult
+            TestResults-functional.xcresult
           if-no-files-found: ignore
