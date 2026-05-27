@@ -43,17 +43,19 @@ enum AudioFormat: String, CaseIterable, Sendable {
 
     /// Formats with a working encoder today. The picker (BL-015) filters to this
     /// so an unimplemented format can never be selected.
-    static let available: [AudioFormat] = [.wav]
+    static let available: [AudioFormat] = [.wav, .m4a]
 
     /// Construct a streaming encoder for this format.
     /// - Throws: `AudioFormatError.notImplemented` for formats not yet supported
-    ///   (BL-012/013/014). Throwing here means no file is ever created for a
+    ///   (BL-013/014). Throwing here means no file is ever created for a
     ///   stubbed format — the failure surfaces before recording begins.
     func makeEncoder() throws -> any AudioFileEncoder {
         switch self {
         case .wav:
             return WAVWriter()
-        case .m4a, .flac, .mp3:
+        case .m4a:
+            return M4AEncoder()
+        case .flac, .mp3:
             throw AudioFormatError.notImplemented(self)
         }
     }
