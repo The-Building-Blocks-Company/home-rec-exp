@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **Status (paused 2026-05-26).** Reliable-core and human-readiness work is complete
+> and on PR #1 (`reliable-core-and-shippable` → `main`), with 37 unit tests passing
+> under Thread Sanitizer. **Before a real release:** produce a notarized DMG via
+> `scripts/build-dmg.sh` (needs a Developer ID Application certificate + a notarytool
+> profile — `create-dmg` is installed), verify the CI workflow's first run, and do a
+> manual GUI pass. Distribution is the resume point.
+
 ### Added
 - **Distribution scaffolding (untested)** — `scripts/build-dmg.sh` orchestrates the direct-distribution flow (archive → Developer ID export → notarize → staple → `create-dmg` → notarize/staple DMG), with `docs/distribution/build.md` and `notarization.md` documenting the required Release settings and one-time Keychain/notarytool setup. Not yet run — requires an Apple Developer account and matching toolchain. No secrets are committed; `dist/` is git-ignored. (BL-030–033)
 - **CI pipeline** — A GitHub Actions workflow (`.github/workflows/ci.yml`) runs the unit-test suite under Thread Sanitizer on every push to `main` and on PRs (UI tests excluded — they need TCC permission). Requires a one-time check that the runner's Xcode matches the project SDK and that the signing approach lets the test host launch. (BL-050)
