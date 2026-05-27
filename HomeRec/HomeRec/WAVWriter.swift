@@ -9,7 +9,7 @@ import Foundation
 import AVFoundation
 
 /// Errors that can occur during WAV file writing
-enum WAVWriterError: Error, LocalizedError {
+enum WAVWriterError: Error, LocalizedError, Equatable {
     case fileCreationFailed
     case fileWriteFailed
     case invalidFormat
@@ -53,6 +53,11 @@ class WAVWriter {
     private var channels: Int = 2
     private var bytesWritten: UInt32 = 0
 
+    /// Rewrite the header in place after this many buffers (~0.7s at 48kHz) so the
+    /// on-disk file stays playable even if `finalize()` never runs (crash/force-quit).
+    static let headerUpdateInterval = 32
+    private var buffersSinceHeaderUpdate = 0
+
     // MARK: - Public Methods
 
     /// Create WAV file and write header
@@ -66,6 +71,7 @@ class WAVWriter {
         self.sampleRate = sampleRate
         self.channels = channels
         self.bytesWritten = 0
+        self.buffersSinceHeaderUpdate = 0
 
         // Create the file
         let fileManager = FileManager.default
@@ -117,6 +123,28 @@ class WAVWriter {
         let data = Data(bytes: int16Data, count: int16Data.count * MemoryLayout<Int16>.size)
         fileHandle.write(data)
         bytesWritten += UInt32(data.count)
+
+        // Periodically rewrite the header so the file is playable even if the
+        // app is killed before finalize() runs.
+        buffersSinceHeaderUpdate += 1
+        if buffersSinceHeaderUpdate >= Self.headerUpdateInterval {
+            buffersSinceHeaderUpdate = 0
+            updateHeaderInPlace()
+        }
+    }
+
+    /// Overwrite the 44-byte header with the current data size, then seek back to
+    /// the end so appending continues. Best-effort: `finalize()` writes the
+    /// authoritative header.
+    private func updateHeaderInPlace() {
+        guard let fileHandle = fileHandle else { return }
+        do {
+            try fileHandle.seek(toOffset: 0)
+            fileHandle.write(createWAVHeader(dataSize: bytesWritten))
+            try fileHandle.seekToEnd()
+        } catch {
+            // Ignore; the next periodic update or finalize() will correct the header.
+        }
     }
 
     /// Finalize WAV file and update header with correct sizes

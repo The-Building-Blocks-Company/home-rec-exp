@@ -6,19 +6,41 @@
 //
 
 import Foundation
+import os
+
+/// Errors originating from the recording controller before/around capture.
+enum RecordingControllerError: Error {
+    case insufficientDiskSpace
+}
 
 /// Controller that coordinates audio recording workflow
-class RecordingController {
+class RecordingController: RecordingControlling {
 
     // MARK: - Properties
 
-    private let captureManager = ScreenCaptureAudioManager()
-    private let audioRecorder = AudioRecorder()
+    private let captureManager: AudioCapturing
+    private let audioRecorder: AudioFileWriting
 
     private var currentRecordingURL: URL?
 
     /// Callback for waveform visualization data
     var onWaveformData: (([Float]) -> Void)?
+
+    /// Forwarded from the capture manager when the stream fails mid-recording.
+    var onStreamError: (@MainActor (String) -> Void)?
+
+    // MARK: - Initialization
+
+    init(
+        captureManager: AudioCapturing? = nil,
+        audioRecorder: AudioFileWriting? = nil
+    ) {
+        self.captureManager = captureManager ?? ScreenCaptureAudioManager()
+        self.audioRecorder = audioRecorder ?? AudioRecorder()
+        self.captureManager.onStreamError = { [weak self] message in
+            self?.onStreamError?(message)
+        }
+    }
 
     // MARK: - Public Methods
 
@@ -27,68 +49,62 @@ class RecordingController {
     /// - Throws: Error if recording cannot start
     @MainActor
     func startRecording() async throws -> URL {
-        DebugLogger.log("🎬 RecordingController.startRecording() called")
-        NSLog("🎬 RecordingController: Starting recording")
-
         // Generate file path
         let fileURL = generateFilePath()
-        DebugLogger.log("   📁 Generated file path: \(fileURL.path)")
-        NSLog("📁 File path: \(fileURL.path)")
+
+        // Refuse to start a doomed recording on a near-full disk.
+        if let available = DiskSpace.availableBytes(at: fileURL),
+           !DiskSpace.hasEnoughSpace(availableBytes: available) {
+            throw RecordingControllerError.insufficientDiskSpace
+        }
 
         // Wire waveform callback
         audioRecorder.onWaveformData = onWaveformData
 
         // Start audio recorder first (creates WAV file)
-        DebugLogger.log("   Starting AudioRecorder...")
         try audioRecorder.startRecording(to: fileURL)
-        DebugLogger.log("   ✅ AudioRecorder started")
-        NSLog("✅ AudioRecorder started")
 
-        // Set up capture with audio callback - use unowned self to avoid retain cycle
+        // Set up capture with audio callback
         let recorder = audioRecorder  // Keep strong reference
-        DebugLogger.log("   Setting up capture manager...")
         try await captureManager.setupCapture { sampleBuffer in
-            DebugLogger.log("🎵 SCStream callback received sample!")
-            NSLog("🎵 Callback received sample")
             recorder.processAudioSample(sampleBuffer)
         }
-        DebugLogger.log("   ✅ Capture manager set up")
-        NSLog("✅ Capture manager set up")
 
         // Start capturing system audio
-        DebugLogger.log("   Starting capture...")
         try await captureManager.startCapture()
-        DebugLogger.log("   ✅ Capture started successfully")
-        NSLog("✅ Capture started")
 
         currentRecordingURL = fileURL
-        DebugLogger.log("✅ RecordingController.startRecording() completed, returning fileURL")
+        Log.recorder.info("Recording started")
         return fileURL
     }
 
     /// Stop recording
     /// - Throws: Error if stop fails
     func stopRecording() async throws {
-        DebugLogger.log("🛑 RecordingController.stopRecording() called")
-
         // Stop capturing audio
-        DebugLogger.log("   Stopping capture manager...")
         try await captureManager.stopCapture()
-        DebugLogger.log("   ✅ Capture manager stopped")
 
         // Stop recorder and finalize WAV file
-        DebugLogger.log("   Stopping audio recorder...")
         try audioRecorder.stopRecording()
-        DebugLogger.log("   ✅ Audio recorder stopped")
 
         // Clean up capture manager
-        DebugLogger.log("   Cleaning up capture manager...")
         await captureManager.cleanup()
-        DebugLogger.log("   ✅ Cleanup complete")
 
         audioRecorder.onWaveformData = nil
         currentRecordingURL = nil
-        DebugLogger.log("✅ RecordingController.stopRecording() completed")
+        Log.recorder.info("Recording stopped")
+    }
+
+    /// Finalize after an unexpected capture failure. The stream has already
+    /// stopped, so capture teardown is best-effort; finalizing the recorder
+    /// preserves the audio captured before the failure as a playable file.
+    func finalizeAfterFailure() async {
+        try? await captureManager.stopCapture()
+        try? audioRecorder.stopRecording()   // finalizes the partial WAV
+        await captureManager.cleanup()
+        audioRecorder.onWaveformData = nil
+        currentRecordingURL = nil
+        Log.recorder.error("Recording finalized after stream failure")
     }
 
     /// Check if currently recording
@@ -124,8 +140,8 @@ class RecordingController {
         // Capture managers directly to avoid referencing self inside the Task closure
         let captureManager = captureManager
         let audioRecorder = audioRecorder
-        guard captureManager.capturing else { return }
-        Task {
+        Task { @MainActor in
+            guard captureManager.capturing else { return }
             try? await captureManager.stopCapture()
             try? audioRecorder.stopRecording()
             await captureManager.cleanup()

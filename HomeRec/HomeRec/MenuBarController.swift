@@ -35,8 +35,10 @@ class MenuBarController: NSObject {
             button.target = self
         }
 
-        // Observe isRecording to swap icon
-        cancellable = viewModel.$isRecording
+        // Observe recording state to swap icon
+        cancellable = viewModel.$state
+            .map { $0 == .recording }
+            .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] isRecording in
                 guard let button = self?.statusItem.button else { return }

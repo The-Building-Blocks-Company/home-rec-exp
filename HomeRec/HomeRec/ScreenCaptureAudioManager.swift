@@ -8,6 +8,7 @@
 import Foundation
 import ScreenCaptureKit
 import AVFoundation
+import os
 
 /// Errors for ScreenCaptureKit audio capture
 enum ScreenCaptureAudioError: Error, LocalizedError {
@@ -44,7 +45,7 @@ enum ScreenCaptureAudioError: Error, LocalizedError {
 }
 
 /// Manages system audio capture using ScreenCaptureKit
-class ScreenCaptureAudioManager: NSObject {
+class ScreenCaptureAudioManager: NSObject, AudioCapturing {
 
     // MARK: - Properties
 
@@ -52,27 +53,27 @@ class ScreenCaptureAudioManager: NSObject {
     private var audioCallback: ((CMSampleBuffer) -> Void)?
     private var isCapturing = false
 
+    /// Called when the stream stops unexpectedly. See `AudioCapturing`.
+    var onStreamError: (@MainActor (String) -> Void)?
+
     // MARK: - Public Methods
 
     /// Set up system audio capture
     /// - Parameter callback: Closure called for each audio buffer
     /// - Throws: ScreenCaptureAudioError if setup fails
     func setupCapture(audioCallback: @escaping (CMSampleBuffer) -> Void) async throws {
-        DebugLogger.log("📺 ScreenCaptureAudioManager.setupCapture() called")
         self.audioCallback = audioCallback
 
         // Get available displays
-        DebugLogger.log("   Getting shareable content...")
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
             onScreenWindowsOnly: false
         )
 
         guard let display = content.displays.first else {
-            DebugLogger.log("   ❌ No displays available")
+            Log.capture.error("No displays available for audio capture")
             throw ScreenCaptureAudioError.noDisplaysAvailable
         }
-        DebugLogger.log("   ✅ Found display: \(display.displayID)")
 
         // Configure stream for audio capture
         // Note: ScreenCaptureKit requires video to be captured alongside audio
@@ -117,8 +118,7 @@ class ScreenCaptureAudioManager: NSObject {
             sampleHandlerQueue: DispatchQueue(label: "com.mdebritto.homerec.audio.capture", qos: .userInitiated)
         )
 
-        DebugLogger.log("✅ ScreenCaptureAudioManager: Added screen and audio output handlers")
-        print("✅ Added screen and audio output handlers")
+        Log.capture.debug("Capture stream configured (screen + audio handlers added)")
     }
 
     /// Start audio capture
@@ -131,9 +131,9 @@ class ScreenCaptureAudioManager: NSObject {
         do {
             try await stream.startCapture()
             isCapturing = true
-            print("✅ ScreenCaptureKit stream started successfully")
+            Log.capture.info("Capture started")
         } catch {
-            print("❌ ScreenCaptureKit stream start failed: \(error)")
+            Log.capture.error("Capture failed to start: \(error.localizedDescription, privacy: .public)")
             throw ScreenCaptureAudioError.startCaptureFailed(error)
         }
     }
@@ -163,8 +163,10 @@ class ScreenCaptureAudioManager: NSObject {
 extension ScreenCaptureAudioManager: SCStreamDelegate {
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        print("❌ ScreenCaptureKit stream stopped with error: \(error.localizedDescription)")
+        let message = error.localizedDescription
+        Log.capture.error("Capture stream stopped with error: \(message, privacy: .public)")
         isCapturing = false
+        onStreamError?(message)
     }
 }
 
@@ -177,28 +179,10 @@ extension ScreenCaptureAudioManager: SCStreamOutput {
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of type: SCStreamOutputType
     ) {
-        // Debug: Log all sample types received
-        if type == .screen {
-            // Ignore video samples (we don't need them)
-            return
-        }
+        // Ignore video samples (we only need audio). No logging here: this
+        // fires per audio buffer on the capture queue — the hot path.
+        guard type == .audio else { return }
 
-        if type == .audio {
-            let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
-            DebugLogger.log("🎵 SCStream: Received audio sample with \(frameCount) frames")
-            NSLog("🎵 SCStream: Received audio sample with \(frameCount) frames")
-            // Forward to callback
-            if let callback = audioCallback {
-                callback(sampleBuffer)
-                DebugLogger.log("✅ SCStream: Forwarded to callback")
-                NSLog("✅ SCStream: Forwarded to callback")
-            } else {
-                DebugLogger.log("❌ SCStream: No callback set!")
-                NSLog("❌ SCStream: No callback set!")
-            }
-        } else if type != .screen {
-            DebugLogger.log("⚠️ SCStream: Unexpected sample type: \(type.rawValue)")
-            NSLog("⚠️ SCStream: Unexpected sample type: \(type.rawValue)")
-        }
+        audioCallback?(sampleBuffer)
     }
 }

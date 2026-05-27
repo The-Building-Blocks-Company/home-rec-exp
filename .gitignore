@@ -10,10 +10,13 @@ DerivedData/
 
 # Build artifacts
 build/
+dist/
 *.app
 *.dSYM
 *.dSYM.zip
 *.xcresult
+*.dmg
+*.xcarchive
 
 # Swift Package Manager
 .build/

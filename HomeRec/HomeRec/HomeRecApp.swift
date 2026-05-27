@@ -7,6 +7,7 @@
 
 import SwiftUI
 import CoreText
+import os
 
 @main
 struct HomeRecApp: App {
@@ -17,25 +18,19 @@ struct HomeRecApp: App {
     init() {
         // Register custom fonts from the app bundle
         Self.registerCustomFonts()
-
-        // Test debug logging at app launch
-        DebugLogger.log("🚀 HomeRec app launched!")
-        print("🚀 HomeRec app launched!")
     }
 
     private static func registerCustomFonts() {
         let fontFiles = ["Archivo-Variable", "Inter"]
         for fontName in fontFiles {
             guard let fontURL = Bundle.main.url(forResource: fontName, withExtension: "ttf") else {
-                print("⚠️ \(fontName).ttf not found in bundle")
+                Log.recorder.error("Font resource not found in bundle: \(fontName, privacy: .public).ttf")
                 continue
             }
             var errorRef: Unmanaged<CFError>?
             if !CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, &errorRef) {
                 let error = errorRef?.takeRetainedValue()
-                print("⚠️ Failed to register \(fontName) font: \(error?.localizedDescription ?? "unknown")")
-            } else {
-                print("✅ \(fontName) font registered successfully")
+                Log.recorder.error("Failed to register font \(fontName, privacy: .public): \(error?.localizedDescription ?? "unknown", privacy: .public)")
             }
         }
     }
@@ -52,5 +47,13 @@ struct HomeRecApp: App {
                 }
         }
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(replacing: .help) {
+                Button("Welcome to Home Rec") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    viewModel.showOnboardingAgain()
+                }
+            }
+        }
     }
 }

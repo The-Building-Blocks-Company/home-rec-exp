@@ -5,6 +5,79 @@ All notable changes to Home Rec will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+> **Status (paused 2026-05-26).** Reliable-core and human-readiness work is complete
+> and on PR #1 (`reliable-core-and-shippable` → `main`), with 37 unit tests passing
+> under Thread Sanitizer. **Before a real release:** produce a notarized DMG via
+> `scripts/build-dmg.sh` (needs a Developer ID Application certificate + a notarytool
+> profile — `create-dmg` is installed), verify the CI workflow's first run, and do a
+> manual GUI pass. Distribution is the resume point.
+
+### Added
+- **Distribution scaffolding (untested)** — `scripts/build-dmg.sh` orchestrates the direct-distribution flow (archive → Developer ID export → notarize → staple → `create-dmg` → notarize/staple DMG), with `docs/distribution/build.md` and `notarization.md` documenting the required Release settings and one-time Keychain/notarytool setup. Not yet run — requires an Apple Developer account and matching toolchain. No secrets are committed; `dist/` is git-ignored. (BL-030–033)
+- **CI pipeline** — A GitHub Actions workflow (`.github/workflows/ci.yml`) runs the unit-test suite under Thread Sanitizer on every push to `main` and on PRs (UI tests excluded — they need TCC permission). Requires a one-time check that the runner's Xcode matches the project SDK and that the signing approach lets the test host launch. (BL-050)
+- **First-run onboarding** — A one-screen welcome sheet on first launch explains what Home Rec does and why it needs Screen Recording permission (audio only, never the screen), with an "Open Settings" button and a live "you're ready" confirmation once permission is granted (re-detected automatically). Shown once (persisted) and re-openable from the Help menu. (BL-041)
+- **Disk-space + long-recording guardrails** — Home Rec now refuses to start a recording when the destination volume has less than ~100 MB free (showing a clear message instead of producing a doomed file), and warns once a single recording passes 30 minutes (offering to stop), since WAV uses ~10 MB/min. The menu bar icon already indicates an active recording at all times. (BL-043)
+- **Diagnostics export + "Report a Problem"** — A menu-bar action gathers recent `os.Logger` entries (via `OSLogStore`) plus app/macOS version into a shareable text file (saved via a save panel), and "Report a Problem" opens a prefilled GitHub issue with version info — replacing the old hunt-for-a-Desktop-log workflow. (BL-042)
+- **Human-readable errors with recovery actions** — Error states now show plain-language messages (no raw system error strings) plus a concrete next step where one exists: stream failures offer "Open Settings", start failures offer "Try Again". Shown in the main window alert and inline in the menu bar popover. Technical detail is retained for logs/diagnostics only. (BL-044)
+- **Live permission re-detection** — The app now re-probes Screen Recording permission whenever it regains focus (`NSApplication.didBecomeActiveNotification`), so granting permission in System Settings takes effect immediately — no quit-and-relaunch. Previously the #1 first-run failure: users granted permission, returned, clicked Record, and nothing happened. (BL-040)
+- **Stream-failure detection & recovery** — When the capture stream stops unexpectedly (permission revoked, display sleep, another capturer), the failure now propagates from `ScreenCaptureAudioManager` → `RecordingController` → `RecorderViewModel`, which transitions to `.error` and **finalizes the partial WAV** so audio captured before the failure is preserved and playable. Previously the UI kept showing "Recording" while nothing was written. (BL-020)
+- **`RecordingState` state machine** — A single source of truth for the recording lifecycle (`idle`/`starting`/`recording`/`stopping`/`error`/`recovering`), owned by `RecorderViewModel`. Illegal transitions (e.g. `idle → stopping`) are rejected by `canTransition(to:)`, making "UI shows recording while nothing is written" unrepresentable. (BL-006)
+- **Unit tests** — `RecordingStateTests` (transition matrix), `WAVWriterTests` (data integrity + crash-safe header), `AudioRecorderTests` (no-drops + 20× cycles under Thread Sanitizer), `StreamFailureTests`, and `RecorderViewModelTests` (lifecycle, permission gating, error handling, clock-driven duration, stream-failure). 30 tests, no hardware, deterministic (no sleeps), TSan-clean. (BL-006, BL-004, BL-024, BL-020, BL-022, BL-005)
+
+### Fixed
+- **Audio-state data races** — All access to the WAV writer is now confined to `AudioRecorder`'s serial processing queue: buffers are handed off without reading writer state on the capture thread, start/stop assign the writer on the queue, and stop runs after all in-flight buffers (FIFO) so no trailing audio is dropped and the writer is finalized exactly once. Verified Thread-Sanitizer-clean across a record/stop cycle and a 20× start/stop loop. (BL-024)
+- **Crash/force-quit could leave an unreadable recording** — `WAVWriter` now rewrites the header in place every ~32 buffers (~0.7s), so a file killed mid-recording still has a valid, non-zero data size and plays back. `finalize()` continues to write the authoritative header on a clean stop. (BL-022)
+- **Dependency-injection seams** — Introduced protocols `AudioCapturing`, `AudioFileWriting`, `RecordingControlling`, and `PermissionProviding`, plus a `DurationClock` abstraction (with `SystemDurationClock`). The core recording types and the view model now accept these via initializers (defaulting to the real implementations), so the workflow can be exercised with mocks and a fake clock — no audio hardware or Screen Recording permission required. (BL-003)
+
+### Changed
+- **Logging moved to `os.Logger`** — Replaced the file-based `DebugLogger`, `NSLog`, and `print` diagnostics with the unified logging system under subsystem `com.mdebritto.homerec` (categories: `capture`, `recorder`, `file`, `permission`). Lifecycle events are logged at `.debug`/`.info`; failures at `.error` so they remain diagnosable from a shipped build via Console.app. (BL-001)
+- **No logging on the audio hot path** — Removed all logging from `AudioRecorder.processSampleBuffer` and the ScreenCaptureKit output callback, which ran per audio buffer (~47×/sec) on the capture thread and risked the very dropouts the app exists to prevent.
+- **`PermissionManager` is now instance-based** — Converted its static methods to instance methods conforming to `PermissionProviding` (no behavior change). (BL-003)
+- **Duration timer uses an injected clock** — `RecorderViewModel` drives the duration display through `DurationClock` instead of a hard-wired `Timer`, enabling deterministic time in tests. (BL-003)
+- **View model drives the state machine** — `RecorderViewModel.isRecording` is now derived from `state` (no longer a stored flag); start/stop/error are explicit transitions, and `statusText` reflects every state. (BL-006)
+- **`AudioRecorder` no longer keeps a standalone `isRecording` flag** — its recording status is derived from whether a file writer is active, removing one of the duplicated booleans that could desync. (BL-006)
+- **`WAVWriterError` is now `Equatable`** — enables precise error-path assertions in tests (no behavior change). (BL-004)
+
+### Removed
+- **`DebugLogger`** — Retired entirely. It opened/seeked/wrote/closed a `FileHandle` plus a synchronous `print()` on every call and dumped `~/Desktop/AudioRecorderDebug.log` in all builds, leaking absolute paths and cluttering the user's Desktop.
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `Log.swift` | New — `os.Logger` definitions for the four subsystem categories |
+| `DebugLogger.swift` | Deleted |
+| `AudioRecorder.swift` | Removed all logging from `processSampleBuffer`/`processAudioSample`; lifecycle log on start; `import os` |
+| `ScreenCaptureAudioManager.swift` | Removed per-buffer logging from the output callback; lifecycle/error logs via `Log.capture`; `import os` |
+| `RecordingController.swift` | Replaced step-by-step logs with concise lifecycle logs; removed per-sample log in capture callback; `import os` |
+| `RecorderViewModel.swift` | Replaced `DebugLogger` with `Log.recorder` error logging; `import os`; inject `RecordingControlling`/`PermissionProviding`/`DurationClock`; removed `Timer` and `deinit` |
+| `HomeRecApp.swift` | Dropped app-launch test log; font-registration failures now log via `os.Logger`; `import os` |
+| `AudioCapturing.swift`, `AudioFileWriting.swift`, `RecordingControlling.swift`, `PermissionProviding.swift`, `Clock.swift` | New — DI protocols + `SystemDurationClock` (BL-003) |
+| `PermissionManager.swift` | Static methods → instance methods conforming to `PermissionProviding` (BL-003) |
+| `RecordingController.swift` | Conforms to `RecordingControlling`; injects `AudioCapturing`/`AudioFileWriting` (BL-003) |
+| `AudioRecorder.swift` | Conforms to `AudioFileWriting`; removed redundant `deinit` (BL-003); dropped standalone `isRecording` flag, derive from writer (BL-006); confined writer access to the serial queue (BL-024) |
+| `ScreenCaptureAudioManager.swift` | Conforms to `AudioCapturing` (BL-003); publishes `onStreamError` on `didStopWithError` (BL-020) |
+| `RecordingState.swift` | New — `RecordingState` + `RecorderError` (+ `streamFailed`, BL-020; plain `message`/`detail`/`recovery` + `RecoverySuggestion`, BL-044) + transition rules (BL-006) |
+| `RecorderView.swift`, `MenuBarPopoverView.swift` | Error alert/inline error use recovery actions (BL-044) |
+| `Diagnostics.swift` | New — diagnostics report (OSLogStore) + export panel + Report-a-Problem URL (BL-042) |
+| `DiskSpace.swift` | New — free-space threshold + long-recording threshold (BL-043) |
+| `RecordingController.swift` | `RecordingControllerError.insufficientDiskSpace`; free-space precheck on start (BL-043) |
+| `RecorderView.swift` | Long-recording warning alert (BL-043); onboarding sheet (BL-041) |
+| `OnboardingView.swift` | New — first-run welcome sheet (BL-041) |
+| `RecorderViewModel.swift` | Onboarding state via injected `UserDefaults`; `completeOnboarding`/`showOnboardingAgain` (BL-041) |
+| `HomeRecApp.swift` | Help menu "Welcome to Home Rec" command (BL-041) |
+| `.github/workflows/ci.yml` | New — GitHub Actions unit tests under TSan (BL-050) |
+| `MenuBarPopoverView.swift` | Help row: Export Diagnostics… / Report a Problem (BL-042) |
+| `RecorderViewModel.swift` | Owns `RecordingState`; transitions + state-derived `isRecording`/`statusText` (BL-006); `handleStreamFailure` wiring (BL-020); re-probes permission on app activation (BL-040) |
+| `MenuBarController.swift` | Observes `$state` (mapped to recording) instead of `$isRecording` (BL-006) |
+| `WAVWriter.swift` | `WAVWriterError` made `Equatable` (BL-004); periodic in-place header rewrite for crash safety (BL-022) |
+| `AudioCapturing.swift`, `RecordingControlling.swift` | Added `onStreamError`; `RecordingControlling.finalizeAfterFailure()` (BL-020) |
+| `RecordingController.swift` | Forwards capture `onStreamError`; `finalizeAfterFailure()` preserves partial WAV (BL-020) |
+| `HomeRecTests/RecordingStateTests.swift`, `WAVWriterTests.swift`, `AudioRecorderTests.swift`, `StreamFailureTests.swift`, `RecorderViewModelTests.swift`, `Mocks.swift` | New — Swift Testing suites + test doubles (BL-006, BL-004, BL-024, BL-020, BL-022, BL-005) |
+
+---
+
 ## [0.3.2] - 2026-03-01 - Screen Recording Permission Fix
 
 ### Changed

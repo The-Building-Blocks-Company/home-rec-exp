@@ -103,19 +103,33 @@ struct RecorderView: View {
         }
         .padding(40)
         .frame(width: 450, height: 450)
-        .alert("Error", isPresented: $viewModel.showError) {
-            Button("OK") {
-                viewModel.showError = false
-            }
-            if viewModel.permissionStatus == .denied {
-                Button("Open Settings") {
-                    viewModel.openSystemSettings()
+        .alert("Something went wrong", isPresented: $viewModel.showError) {
+            if let recovery = viewModel.recoverySuggestion {
+                Button(recovery.label) {
+                    viewModel.performRecovery()
                 }
+            }
+            Button("OK", role: .cancel) {
+                viewModel.showError = false
             }
         } message: {
             if let errorMessage = viewModel.errorMessage {
                 Text(errorMessage)
             }
+        }
+        .alert("Still recording", isPresented: $viewModel.showLongRecordingWarning) {
+            Button("Keep Recording", role: .cancel) {
+                viewModel.showLongRecordingWarning = false
+            }
+            Button("Stop") {
+                Task { await viewModel.stopRecording() }
+            }
+        } message: {
+            Text("You've been recording for a while. Long recordings use a lot of disk space — about 10 MB per minute.")
+        }
+        .sheet(isPresented: $viewModel.showOnboarding) {
+            OnboardingView()
+                .environmentObject(viewModel)
         }
         .onAppear {
             Task {
