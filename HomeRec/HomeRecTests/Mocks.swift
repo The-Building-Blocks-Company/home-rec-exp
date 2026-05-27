@@ -52,11 +52,14 @@ final class MockAudioFileWriting: AudioFileWriting {
     private(set) var recording = false
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    /// Format passed to the most recent `startRecording(to:format:)`, for assertions.
+    private(set) var lastStartFormat: AudioFormat?
     /// Fired each time `stopRecording()` (the finalize point) is called.
     var onStop: (() -> Void)?
 
-    func startRecording(to fileURL: URL) throws {
+    func startRecording(to fileURL: URL, format: AudioFormat) throws {
         startCount += 1
+        lastStartFormat = format
         recording = true
     }
 
@@ -141,16 +144,19 @@ final class MockRecordingControlling: RecordingControlling {
     private(set) var stopCount = 0
     private(set) var finalizeCount = 0
 
-    /// If set, `startRecording()` throws this instead of succeeding.
+    /// If set, `startRecording(format:)` throws this instead of succeeding.
     var startError: Error?
     /// If set, `stopRecording()` throws this instead of succeeding.
     var stopError: Error?
     var fileURL = URL(fileURLWithPath: "/tmp/mock-recording.wav")
+    /// Format passed to the most recent `startRecording(format:)`, for assertions.
+    private(set) var lastStartFormat: AudioFormat?
     /// Fired when `finalizeAfterFailure()` runs.
     var onFinalize: (() -> Void)?
 
-    func startRecording() async throws -> URL {
+    func startRecording(format: AudioFormat) async throws -> URL {
         startCount += 1
+        lastStartFormat = format
         if let startError { throw startError }
         isRecording = true
         recordingURL = fileURL

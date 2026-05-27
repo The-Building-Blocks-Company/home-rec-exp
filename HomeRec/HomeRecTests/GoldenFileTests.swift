@@ -57,7 +57,7 @@ struct GoldenFileTests {
         defer { try? FileManager.default.removeItem(at: url) }
 
         let recorder = AudioRecorder()
-        try recorder.startRecording(to: url)
+        try recorder.startRecording(to: url, format: .wav)
         for b in 0..<bufferCount {
             let sb: CMSampleBuffer = interleaved
                 ? SampleBufferFixtures.interleaved(frames: framesPerBuffer, channels: channels) { ch, f in sample(buffer: b, channel: ch, frame: f) }
