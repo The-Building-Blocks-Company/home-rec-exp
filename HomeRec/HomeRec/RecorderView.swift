@@ -18,7 +18,7 @@ struct RecorderView: View {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 64, height: 64)
+                    .frame(width: 84, height: 84)
                     .padding(.bottom, 32)
 
                 StatusBar(
