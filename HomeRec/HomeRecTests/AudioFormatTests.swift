@@ -34,9 +34,9 @@ struct AudioFormatTests {
         #expect(Set(names).count == AudioFormat.allCases.count)   // no copy-paste dupes
     }
 
-    @Test("available formats are exactly [.wav] in BL-011")
+    @Test("available formats are [.wav, .m4a] after BL-012")
     func availability() {
-        #expect(AudioFormat.available == [.wav])
+        #expect(AudioFormat.available == [.wav, .m4a])
     }
 
     @Test("makeEncoder() returns a WAVWriter for .wav")
@@ -45,8 +45,14 @@ struct AudioFormatTests {
         #expect(encoder is WAVWriter)
     }
 
+    @Test("makeEncoder() returns an M4AEncoder for .m4a")
+    func m4aFactory() throws {
+        let encoder = try AudioFormat.m4a.makeEncoder()
+        #expect(encoder is M4AEncoder)
+    }
+
     @Test("makeEncoder() throws .notImplemented for stubbed formats",
-          arguments: [AudioFormat.m4a, .flac, .mp3])
+          arguments: [AudioFormat.flac, .mp3])
     func stubbedFactoriesThrow(_ format: AudioFormat) {
         #expect(throws: AudioFormatError.notImplemented(format)) {
             _ = try format.makeEncoder()
