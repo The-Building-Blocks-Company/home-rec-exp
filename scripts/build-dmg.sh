@@ -30,11 +30,18 @@ SCHEME="HomeRec"
 BUILT_APP_NAME="HomeRec"   # what xcodebuild produces (PRODUCT_NAME / TARGET_NAME)
 APP_NAME="Home Rec"        # user-facing bundle name (drives the Finder/Dock label)
 CONFIG="Release"
+VOL_ICON="$(pwd)/Assets/AppIcon.icns"
+VERSION="$(awk -F' = ' '/MARKETING_VERSION/ {gsub(/[;\" ]/, "", $2); print $2; exit}' \
+             "$PROJECT/project.pbxproj")"
+: "${VERSION:=0.0.0}"
 DIST_DIR="$(pwd)/dist"
 ARCHIVE="$DIST_DIR/$BUILT_APP_NAME.xcarchive"
 EXPORT_DIR="$DIST_DIR/export"
 APP="$EXPORT_DIR/$APP_NAME.app"   # after the rename below
-DMG="$DIST_DIR/$APP_NAME.dmg"
+# DMG filename is versionless (`HomeRec.dmg`) so the GitHub "releases/latest/download"
+# URL pattern stays stable across releases. The version is visible inside the bundle
+# (Info.plist CFBundleShortVersionString) and in the GitHub release page itself.
+DMG="$DIST_DIR/HomeRec.dmg"
 
 : "${TEAM_ID:?Set TEAM_ID to your Apple Developer Team ID}"
 : "${AC_PROFILE:?Set AC_PROFILE to your stored notarytool profile name}"
@@ -52,6 +59,7 @@ xcodebuild archive \
   -project "$PROJECT" \
   -scheme "$SCHEME" \
   -configuration "$CONFIG" \
+  -destination "generic/platform=macOS" \
   -archivePath "$ARCHIVE" \
   DEVELOPMENT_TEAM="$TEAM_ID" \
   CODE_SIGN_STYLE=Manual \
@@ -81,6 +89,12 @@ xcodebuild -exportArchive \
 # signature-safe (the signature covers contents, not the enclosing filename).
 mv "$EXPORT_DIR/$BUILT_APP_NAME.app" "$APP"
 
+# Strip iCloud-attached extended attributes (com.apple.FinderInfo, quarantine, etc.)
+# that codesign refuses to accept. Safe: Mach-O code signatures live inside the
+# binary (LC_CODE_SIGNATURE), not in xattrs, so clearing xattrs preserves signing.
+echo "==> Stripping iCloud xattrs…"
+xattr -cr "$APP"
+
 echo "==> Verifying signature…"
 codesign --verify --deep --strict --verbose=2 "$APP"
 
@@ -90,8 +104,13 @@ xcrun notarytool submit "$DIST_DIR/$APP_NAME.zip" --keychain-profile "$AC_PROFIL
 xcrun stapler staple "$APP"
 
 echo "==> Building DMG…"
+DMG_VOLICON_ARGS=()
+if [[ -f "$VOL_ICON" ]]; then
+  DMG_VOLICON_ARGS=(--volicon "$VOL_ICON")
+fi
 create-dmg \
   --volname "Home Rec" \
+  "${DMG_VOLICON_ARGS[@]}" \
   --window-size 600 400 \
   --icon-size 100 \
   --icon "$APP_NAME.app" 175 190 \
@@ -104,6 +123,19 @@ xcrun notarytool submit "$DMG" --keychain-profile "$AC_PROFILE" --wait
 xcrun stapler staple "$DMG"
 
 echo "==> Validating Gatekeeper acceptance…"
-spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG" || true
+# The DMG ticket: a stapled notarization ticket is the canonical Gatekeeper signal.
+xcrun stapler validate "$DMG"
+# The real-world Gatekeeper check is on the .app inside the mounted DMG. We mount,
+# probe with `spctl --assess --type execute`, and detach. `spctl --type install` on
+# the DMG file would look for a codesign signature on the container itself, which
+# we deliberately don't add — the staple is sufficient.
+MOUNT_DIR="/Volumes/Home Rec"
+hdiutil attach "$DMG" -nobrowse -readonly >/dev/null
+spctl --assess --type execute --verbose=2 "$MOUNT_DIR/$APP_NAME.app"
+hdiutil detach "$MOUNT_DIR" >/dev/null
 
-echo "==> Done: $DMG"
+echo "==> Emitting SHA-256 sidecar…"
+( cd "$DIST_DIR" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256" )
+
+echo "==> Done: $DMG (v$VERSION)"
+echo "         $(awk '{print $1}' "$DMG.sha256")  sha256"
