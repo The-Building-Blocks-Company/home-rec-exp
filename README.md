@@ -4,7 +4,15 @@
 
 <h1 align="center">Home Rec</h1>
 
-<p align="center">A native macOS application for recording system audio to WAV files</p>
+<p align="center">The simplest way to record system audio on macOS.<br>
+Native Mac app. Lossless WAV. One click. Free, forever.</p>
+
+<p align="center">
+  <strong><a href="https://www.homerec.app">homerec.app</a></strong> &nbsp;·&nbsp;
+  <a href="https://github.com/melissa-pereira-deel/home-rec/releases/latest/download/HomeRec.dmg">Download .dmg</a> &nbsp;·&nbsp;
+  <a href="https://homerec.app/privacy">Privacy</a> &nbsp;·&nbsp;
+  <a href="https://buymeacoffee.com/melissadebritto">Buy me a coffee</a>
+</p>
 
 ![macOS](https://img.shields.io/badge/macOS-15.0+-blue.svg)
 ![Swift](https://img.shields.io/badge/Swift-6.0+-orange.svg)
@@ -17,16 +25,19 @@ Home Rec is a lightweight macOS app that captures system audio output and saves 
 
 ### Features
 
-- **System-Wide Audio Capture** — Records audio from any application using ScreenCaptureKit
-- **Live Waveform** — Real-time oscilloscope-style visualization while recording
-- **High-Quality WAV Output** — Lossless PCM format at 48kHz/16-bit stereo
-- **Simple Interface** — Clean SwiftUI design with one-click recording
-- **Real-Time Duration Display** — Live recording timer (MM:SS format)
-- **Automatic File Naming** — Timestamp-based filenames (`recording_YYYY-MM-DD_HH-MM-SS.wav`)
-- **Menu Bar Integration** — Persistent menu bar icon with compact popover for quick record/stop without switching windows
-- **Background Recording** — App stays alive when the main window is closed; record from the menu bar
-- **Finder Integration** — Quick "Reveal in Finder" button after recording
-- **Permission Management** — Automatic Screen Recording permission handling
+- **System-wide audio capture** — Records audio from any app using Apple's ScreenCaptureKit. No virtual audio drivers, no kernel extensions, no routing tricks.
+- **Lossless WAV + M4A export** — 48 kHz / 16-bit stereo PCM out of the box; AAC at 44.1 kHz / 256 kbps when you want a smaller file. FLAC and MP3 on the roadmap.
+- **Live waveform feedback** — Real-time amplitude visualization in both the main window and the menu bar popover. You always know the signal is good.
+- **Menu bar popover** — Persistent menu bar icon with compact controls. Record, stop, reveal in Finder without switching windows.
+- **Background recording** — Close the main window, keep recording from the menu bar. App stays alive until you Quit.
+- **Choose where recordings go** — Configurable save location (defaults to Desktop). Falls back gracefully if the chosen folder disappears.
+- **Stream-failure recovery** — If macOS revokes capture mid-recording (permission flipped off, display sleep, another app grabs the device), Home Rec detects it, transitions to an error state, and **finalizes the partial WAV** so audio captured before the failure is preserved.
+- **Crash/quit-safe WAV** — The header is rewritten every ~0.7s so a force-quit or kernel panic still leaves a playable file.
+- **First-run onboarding** — One-screen explanation of what Home Rec does and why it needs Screen Recording permission. Re-openable from the Help menu.
+- **Live permission re-detection** — Grant Screen Recording in System Settings, switch back to Home Rec, and the Record button enables itself. No quit-and-relaunch.
+- **Diagnostics export + "Report a Problem"** — A menu-bar action gathers recent `os.Logger` entries plus app/macOS version into a shareable text file and opens a prefilled GitHub issue.
+- **Disk-space + long-recording guardrails** — Refuses to start when the destination volume has < 100 MB free; warns once a recording passes 30 minutes.
+- **No telemetry. No network calls. Audio stays on your Mac.** No SDK, no analytics, no crash-reporter ping. Verifiable in the source.
 
 ### Alternatives
 
@@ -46,23 +57,28 @@ Home Rec is designed for users who want the simplest possible path to recording 
 ## Requirements
 
 - macOS 15 (Sequoia) or later
-- Xcode 15+ (for development)
-- Screen Recording permission (automatically requested)
+- Apple Silicon or Intel
+- Screen Recording permission (the app prompts on first record)
+
+For building from source: Xcode 16+ and a free Apple Developer account.
 
 ## Installation
 
 ### Download (recommended)
 
-Download the latest signed and notarized DMG:
+The easiest path is the website:
 
-**[⬇ HomeRec.dmg](https://github.com/melissa-pereira-deel/home-rec/releases/latest/download/HomeRec.dmg)**
+### → [**homerec.app**](https://www.homerec.app)
+
+Or grab the signed and notarized DMG directly from GitHub Releases:
+
+**[⬇ HomeRec.dmg](https://github.com/melissa-pereira-deel/home-rec/releases/latest/download/HomeRec.dmg)** &nbsp;·&nbsp; [SHA-256](https://github.com/melissa-pereira-deel/home-rec/releases/latest/download/HomeRec.dmg.sha256) &nbsp;·&nbsp; [Release notes](https://github.com/melissa-pereira-deel/home-rec/releases/latest)
 
 - Universal binary (Apple Silicon + Intel)
-- Signed with Developer ID and notarized by Apple — opens with no Gatekeeper warning
-- [Verify the SHA-256](https://github.com/melissa-pereira-deel/home-rec/releases/latest/download/HomeRec.dmg.sha256) if you care
-- [Release notes](https://github.com/melissa-pereira-deel/home-rec/releases/latest)
+- Signed with Developer ID + notarized by Apple — no Gatekeeper warning
+- The `releases/latest/download/HomeRec.dmg` URL is stable across releases; always serves the newest version
 
-After downloading, double-click the DMG and drag Home Rec to Applications. macOS will show a one-time "downloaded from the Internet" dialog the first time you launch — that's normal for any non-Mac-App-Store app. Click **Open**.
+After downloading, double-click the DMG and drag **Home Rec** to **Applications**. macOS will show a one-time *"downloaded from the Internet"* dialog the first time you launch — that's normal for any app distributed outside the Mac App Store. Click **Open**.
 
 ### From source
 
@@ -90,36 +106,27 @@ If you want to build it yourself:
 
 ## Usage
 
-1. **Launch the app** — A menu bar icon (waveform) appears alongside the main window
-2. **Click "Start Recording"** — Use the main window or click the menu bar icon and press Record
-3. **Play audio** from any application on your Mac
-4. **Watch the waveform** — A live red waveform line shows audio activity in both the window and popover
-5. **Click "Stop Recording"** when done (from either the window or the menu bar)
-6. **Find your recording** on the Desktop as `recording_YYYY-MM-DD_HH-MM-SS.wav`
+1. **Launch the app** — a menu bar icon (waveform) appears alongside the main window.
+2. **Click "Start recording"** — use the main window or the menu bar popover. Recording starts immediately; the live timer and waveform confirm audio is flowing.
+3. **Play audio** from any app on your Mac.
+4. **Click "Stop recording"** when done — from either the window or the menu bar.
+5. **Find your recording** in the save location you chose (defaults to Desktop) as `recording_YYYY-MM-DD_HH-MM-SS.wav`. A "Reveal in Finder" button appears in the popover after each recording.
 
-> **Tip:** You can close the main window and keep recording from the menu bar. The app stays alive as long as the menu bar icon is visible. Use "Quit" from the popover or Cmd+Q to fully exit.
+> **Tip:** Close the main window and keep recording from the menu bar. The app stays alive as long as the icon is visible. Quit via the popover or ⌘Q.
 
-### Granting Permissions
+### Granting Screen Recording permission
 
-Home Rec requires **Screen Recording** permission to access system audio. The app registers itself in the Screen Recording permission list automatically at launch.
+Home Rec needs **Screen Recording** permission to capture system audio. The first time you click Record, macOS shows the permission prompt automatically.
 
 **First-time setup:**
 
-1. **Launch Home Rec** — the app automatically registers in System Settings
-2. Open **System Settings > Privacy & Security > Screen Recording**
-3. Find **Home Rec** in the list and enable the toggle
-4. **Quit and relaunch** Home Rec (the permission takes effect after restart)
-5. Click "Start Recording" — it should now work
+1. Launch Home Rec.
+2. Click **Start recording** — macOS prompts: *"Home Rec would like to record this computer's screen and audio."*
+3. Click **Open System Settings**.
+4. In **Privacy & Security → Screen Recording**, enable the toggle for **Home Rec**.
+5. Switch back to Home Rec — the Record button enables itself within ~1s of the window regaining focus. **No quit-and-relaunch needed.**
 
-**If you click "Start Recording" and nothing happens:**
-
-The app may already be in the permission list but disabled:
-
-1. Open **System Settings** > **Privacy & Security** > **Screen Recording**
-2. Look for **Home Rec** in the list and enable it
-3. Quit and relaunch the app
-
-> **Why Screen Recording?** macOS requires this permission for any app that captures system audio via ScreenCaptureKit. Home Rec only captures audio — it does not record your screen visually.
+> **Why Screen Recording?** macOS gates all ScreenCaptureKit audio capture behind this permission, even when the app records audio only (Home Rec does not record your screen visually). See the [Privacy Policy](https://homerec.app/privacy) for the full data-flow story — short version: nothing leaves your Mac.
 
 ## Architecture
 
@@ -187,7 +194,7 @@ The app may already be in the permission list but disabled:
 
 ### Why ScreenCaptureKit?
 
-- Direct system audio access (macOS 12.3+)
+- Direct system audio access (ScreenCaptureKit, available since macOS 12.3)
 - Simpler API than Core Audio Taps
 - Native CMSampleBuffer integration
 - Built-in permission handling
@@ -248,44 +255,58 @@ xcodebuild test -scheme HomeRec -destination 'platform=macOS'
 
 _Note: Test coverage is a work in progress._
 
-## Known Limitations
+## Known limitations
 
-1. Always saves to Desktop (no save location picker yet)
-2. WAV only (no MP3, M4A, FLAC export yet)
-3. No recording duration limit
-4. No error recovery if stream fails mid-recording
-5. Debug logging enabled in development builds
+1. FLAC and MP3 export are not yet supported (WAV + M4A ship today).
+2. No per-application audio capture yet — Home Rec captures whatever your Mac is outputting as a whole. Per-app capture is on the roadmap.
+3. The custom Screen Recording permission prompt copy is still macOS's default ("would like to record this computer's screen and audio") instead of a Home Rec-authored string. Polish item, not a functionality gap.
 
 ## Roadmap
 
-**Next priorities:**
-- Custom save location picker
-- Multiple audio format support (MP3, M4A, FLAC)
-- Error recovery for stream failures
-- Conditional debug logging (production vs. development)
-- Unit and integration tests
+**Next up:**
+- FLAC export (lossless, smaller than WAV)
+- MP3 export (via AVAssetExportSession post-stop)
+- Per-application audio capture
+- Custom permission-prompt copy (`NSScreenCaptureUsageDescription`)
+- Sparkle auto-update
+
+**Shipped in v1.0** *(highlights — see [CHANGELOG.md](CHANGELOG.md) for the full list):*
+
+- Notarized DMG distribution via [homerec.app](https://www.homerec.app) and GitHub Releases
+- WAV + M4A export with a configurable save location picker
+- State machine for the recording lifecycle (no more "UI says recording but nothing is written")
+- Stream-failure detection + partial-WAV preservation
+- Crash/quit-safe WAV header rewriting
+- First-run onboarding sheet + live permission re-detection
+- Diagnostics export + "Report a Problem" menu action
+- Disk-space + long-recording guardrails
+- Unit tests (30+, deterministic, Thread-Sanitizer-clean) + CI under GitHub Actions
 
 ## Troubleshooting
 
-### "Screen Recording Permission Required"
-1. The app registers itself at launch — go to **System Settings > Privacy & Security > Screen Recording**
-2. Find **Home Rec** in the list and enable the toggle
-3. **Quit and relaunch** the app (permission only takes effect after restart)
+### "Screen Recording Permission Required" after granting it
 
-### Home Rec Doesn't Appear in the Screen Recording List
-The app registers itself on launch via an `SCShareableContent` probe. If it still doesn't appear, try quitting and relaunching the app. You can also reset the permission and relaunch:
+Go to **System Settings → Privacy & Security → Screen Recording** and confirm the toggle for **Home Rec** is on. Then switch back to Home Rec — the Record button enables within ~1s of the window regaining focus. **No restart needed.**
+
+If you see *multiple* "Home Rec" entries in the list, that usually means there are leftover Debug or earlier builds installed under different signatures. Remove the duplicates with the `−` button and keep only the one from `/Applications/Home Rec.app`.
+
+### Home Rec doesn't appear in the Screen Recording list
+
+The app registers itself on launch via an `SCShareableContent` probe. If it still doesn't appear, quit and relaunch. You can also force-reset the TCC entry for the bundle and try again:
 
 ```bash
-tccutil reset ScreenCapture <your-bundle-id>
+tccutil reset ScreenCapture com.mdebritto.HomeRec
 ```
 
-The default bundle identifier is `com.mdebritto.HomeRec`. If you changed it during code signing setup, use your own (check **Xcode > target > General > Bundle Identifier**).
+If you built from source with a different bundle identifier, substitute it above (check **Xcode → target → General → Bundle Identifier**).
 
-### Recording File is Empty (44 bytes)
-This was a critical bug resolved in v0.1.0. Ensure you're on the latest version.
+### Recording file is empty (44 bytes)
 
-### Permission Resets After Rebuild (Developers Only)
-If you're building from source, the project uses Apple Development certificate signing to maintain a stable Team ID across rebuilds. If you change the bundle identifier or signing certificate, you'll need to re-grant Screen Recording permission.
+Historical bug, fixed long ago in v0.1.0. If you're on v1.0+ and still seeing it, please [open an issue](https://github.com/melissa-pereira-deel/home-rec/issues) with the diagnostics export from the menu bar.
+
+### Permission resets after rebuilding from source
+
+The project signs with your team's Apple Development certificate when built locally — different signature than the production Developer ID. macOS's TCC keys permission grants by `(bundle ID + designated requirement)`, so changing the signing identity *can* invalidate prior grants. If that happens, just re-grant in System Settings.
 
 ## Contributing
 
@@ -325,11 +346,16 @@ Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 Copyright 2026 Melissa de Britto
 
+## Support the project
+
+Home Rec is free, forever — no paid tier, no upsell, no premium hiding behind a paywall. If it earns a spot on your Mac and you'd like to chip in, [buy me a coffee](https://buymeacoffee.com/melissadebritto). Any amount. No ceiling. A gift, not a fee.
+
 ## Acknowledgments
 
 - Built with Apple's [ScreenCaptureKit](https://developer.apple.com/documentation/screencapturekit) framework
 - Developed with [Claude Code](https://claude.ai/claude-code) (Anthropic)
+- Website hosted on [Vercel](https://vercel.com) at [homerec.app](https://www.homerec.app)
 
 ---
 
-**Version:** 0.3.2 | **Last Updated:** 2026-03-01
+**Version:** 1.0 &nbsp;·&nbsp; **Last updated:** 2026-06-04 &nbsp;·&nbsp; **Download:** [homerec.app](https://www.homerec.app)
