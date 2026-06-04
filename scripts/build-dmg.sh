@@ -46,6 +46,15 @@ DMG="$DIST_DIR/HomeRec.dmg"
 : "${TEAM_ID:?Set TEAM_ID to your Apple Developer Team ID}"
 : "${AC_PROFILE:?Set AC_PROFILE to your stored notarytool profile name}"
 
+# Ensure the non-iCloud staging directory (defined later) is cleaned up on exit.
+NON_ICLOUD_STAGING=""
+cleanup() {
+  if [[ -n "$NON_ICLOUD_STAGING" && -d "$NON_ICLOUD_STAGING" ]]; then
+    rm -rf "$NON_ICLOUD_STAGING"
+  fi
+}
+trap cleanup EXIT
+
 command -v create-dmg >/dev/null 2>&1 || {
   echo "error: create-dmg not found. Install with: brew install create-dmg" >&2
   exit 1
@@ -92,7 +101,18 @@ mv "$EXPORT_DIR/$BUILT_APP_NAME.app" "$APP"
 # Strip iCloud-attached extended attributes (com.apple.FinderInfo, quarantine, etc.)
 # that codesign refuses to accept. Safe: Mach-O code signatures live inside the
 # binary (LC_CODE_SIGNATURE), not in xattrs, so clearing xattrs preserves signing.
-echo "==> Stripping iCloud xattrs…"
+#
+# Robust fix: copy the .app to a non-iCloud staging directory in /tmp before
+# verify+notarize+DMG. iCloud Drive aggressively re-attaches FinderInfo to files
+# inside its sync root within milliseconds of any modification, racing with our
+# strip step. Working from /tmp eliminates the race entirely. The final DMG is
+# moved back to dist/ at the end.
+NON_ICLOUD_STAGING="${TMPDIR:-/tmp}/HomeRec-build-$$"
+rm -rf "$NON_ICLOUD_STAGING"
+mkdir -p "$NON_ICLOUD_STAGING"
+echo "==> Moving .app out of iCloud to $NON_ICLOUD_STAGING …"
+mv "$APP" "$NON_ICLOUD_STAGING/"
+APP="$NON_ICLOUD_STAGING/$APP_NAME.app"
 xattr -cr "$APP"
 
 echo "==> Verifying signature…"

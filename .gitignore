@@ -60,6 +60,12 @@ home-rec-website.html
 privacy.html
 terms.html
 
+# Vercel deploy config — describes how the website is deployed, not how the
+# app is built. Kept local alongside the website HTML files.
+vercel.json
+.vercelignore
+.vercel/
+
 # Build logs from scripts/build-dmg.sh (contain local paths + submission IDs)
 dist-build.log
 
