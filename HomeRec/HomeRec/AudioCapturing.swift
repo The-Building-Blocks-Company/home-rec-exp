@@ -7,16 +7,19 @@
 //
 
 import Foundation
-import CoreMedia
+import AVFoundation
 
 /// A source of captured system audio. Implemented by `ScreenCaptureAudioManager`.
+///
+/// Every implementation must deliver `AVAudioPCMBuffer` at 48kHz, stereo, Float32,
+/// non-interleaved — the contract `AudioRecorder` and its encoders depend on.
 @MainActor
 protocol AudioCapturing: AnyObject, Sendable {
     var capturing: Bool { get }
     /// Called when the capture stream stops unexpectedly (e.g. permission revoked,
     /// display sleep, another capturer). The argument is a plain-language detail.
     var onStreamError: (@MainActor (String) -> Void)? { get set }
-    func setupCapture(audioCallback: @escaping (CMSampleBuffer) -> Void) async throws
+    func setupCapture(audioCallback: @escaping (AVAudioPCMBuffer) -> Void) async throws
     func startCapture() async throws
     func stopCapture() async throws
     func cleanup() async

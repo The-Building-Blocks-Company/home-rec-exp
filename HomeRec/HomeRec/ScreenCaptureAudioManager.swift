@@ -50,7 +50,7 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
     // MARK: - Properties
 
     private var stream: SCStream?
-    private var audioCallback: ((CMSampleBuffer) -> Void)?
+    private var audioCallback: ((AVAudioPCMBuffer) -> Void)?
     private var isCapturing = false
 
     /// Called when the stream stops unexpectedly. See `AudioCapturing`.
@@ -61,7 +61,7 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
     /// Set up system audio capture
     /// - Parameter callback: Closure called for each audio buffer
     /// - Throws: ScreenCaptureAudioError if setup fails
-    func setupCapture(audioCallback: @escaping (CMSampleBuffer) -> Void) async throws {
+    func setupCapture(audioCallback: @escaping (AVAudioPCMBuffer) -> Void) async throws {
         self.audioCallback = audioCallback
 
         // Get available displays
@@ -183,6 +183,9 @@ extension ScreenCaptureAudioManager: SCStreamOutput {
         // fires per audio buffer on the capture queue — the hot path.
         guard type == .audio else { return }
 
-        audioCallback?(sampleBuffer)
+        // Convert at the delegate boundary so every AudioCapturing implementation
+        // hands AudioRecorder the same canonical AVAudioPCMBuffer type (BL-099).
+        guard let pcmBuffer = AudioSampleConverter.makePCMBuffer(from: sampleBuffer) else { return }
+        audioCallback?(pcmBuffer)
     }
 }

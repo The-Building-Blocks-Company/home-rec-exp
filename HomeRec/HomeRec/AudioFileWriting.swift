@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import CoreMedia
+import AVFoundation
 
 /// Writes captured audio buffers to a file. Implemented by `AudioRecorder`.
 @MainActor
@@ -17,6 +17,6 @@ protocol AudioFileWriting: AnyObject, Sendable {
     /// Begin writing to `fileURL`, encoding in `format` (BL-015). The format is
     /// fixed for the lifetime of this recording.
     func startRecording(to fileURL: URL, format: AudioFormat) throws
-    func processAudioSample(_ sampleBuffer: CMSampleBuffer)
+    func processAudioSample(_ pcmBuffer: AVAudioPCMBuffer)
     func stopRecording() throws
 }

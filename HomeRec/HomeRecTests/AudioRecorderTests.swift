@@ -10,7 +10,6 @@
 import Testing
 import Foundation
 import AVFoundation
-import CoreMedia
 @testable import HomeRec
 
 @MainActor
@@ -21,67 +20,12 @@ struct AudioRecorderTests {
             .appendingPathComponent("audiorecorder-test-\(UUID().uuidString).wav")
     }
 
-    /// Build a silent interleaved Float32 CMSampleBuffer with the given frame count,
-    /// matching the layout ScreenCaptureKit delivers.
-    private func makeSampleBuffer(frames: Int, sampleRate: Double = 48000, channels: Int = 2) -> CMSampleBuffer {
-        var asbd = AudioStreamBasicDescription(
-            mSampleRate: sampleRate,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: UInt32(channels * 4),
-            mFramesPerPacket: 1,
-            mBytesPerFrame: UInt32(channels * 4),
-            mChannelsPerFrame: UInt32(channels),
-            mBitsPerChannel: 32,
-            mReserved: 0
-        )
-        var formatDescription: CMAudioFormatDescription?
-        CMAudioFormatDescriptionCreate(
-            allocator: kCFAllocatorDefault,
-            asbd: &asbd,
-            layoutSize: 0, layout: nil,
-            magicCookieSize: 0, magicCookie: nil,
-            extensions: nil,
-            formatDescriptionOut: &formatDescription
-        )
-
-        let dataByteCount = frames * channels * 4
-        var blockBuffer: CMBlockBuffer?
-        CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: nil,
-            blockLength: dataByteCount,
-            blockAllocator: kCFAllocatorDefault,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: dataByteCount,
-            flags: kCMBlockBufferAssureMemoryNowFlag,
-            blockBufferOut: &blockBuffer
-        )
-        CMBlockBufferFillDataBytes(with: 0, blockBuffer: blockBuffer!, offsetIntoDestination: 0, dataLength: dataByteCount)
-
-        var sampleBuffer: CMSampleBuffer?
-        var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: CMTimeScale(sampleRate)),
-            presentationTimeStamp: CMTime(value: 0, timescale: CMTimeScale(sampleRate)),
-            decodeTimeStamp: .invalid
-        )
-        var sampleSize = channels * 4
-        CMSampleBufferCreate(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: blockBuffer,
-            dataReady: true,
-            makeDataReadyCallback: nil,
-            refcon: nil,
-            formatDescription: formatDescription,
-            sampleCount: CMItemCount(frames),
-            sampleTimingEntryCount: 1,
-            sampleTimingArray: &timing,
-            sampleSizeEntryCount: 1,
-            sampleSizeArray: &sampleSize,
-            sampleBufferOut: &sampleBuffer
-        )
-        return sampleBuffer!
+    /// Build a silent, canonical non-interleaved Float32 PCM buffer with the given
+    /// frame count — the same shape every `AudioCapturing` source delivers (BL-099).
+    private func makePCMBuffer(frames: Int, sampleRate: Double = 48000, channels: Int = 2) -> AVAudioPCMBuffer {
+        SampleBufferFixtures.makePCMBuffer(
+            channels: channels, frames: frames, sampleRate: sampleRate, interleaved: false
+        ) { _, _ in 0 }
     }
 
     /// Read the WAV `data` chunk size (UInt32 LE at offset 40).
@@ -101,7 +45,7 @@ struct AudioRecorderTests {
         let bufferCount = 50
         let framesPerBuffer = 64
         for _ in 0..<bufferCount {
-            recorder.processAudioSample(makeSampleBuffer(frames: framesPerBuffer))
+            recorder.processAudioSample(makePCMBuffer(frames: framesPerBuffer))
         }
         try recorder.stopRecording()   // drains all in-flight buffers, then finalizes
 
@@ -121,7 +65,7 @@ struct AudioRecorderTests {
             let recorder = AudioRecorder()
             try recorder.startRecording(to: url, format: .wav)
             for _ in 0..<buffersPerCycle {
-                recorder.processAudioSample(makeSampleBuffer(frames: framesPerBuffer))
+                recorder.processAudioSample(makePCMBuffer(frames: framesPerBuffer))
             }
             try recorder.stopRecording()
 

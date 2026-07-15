@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import CoreMedia
+import AVFoundation
 @testable import HomeRec
 
 @MainActor
@@ -18,9 +18,9 @@ final class MockAudioCapturing: AudioCapturing {
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var cleanupCount = 0
-    private var audioCallback: ((CMSampleBuffer) -> Void)?
+    private var audioCallback: ((AVAudioPCMBuffer) -> Void)?
 
-    func setupCapture(audioCallback: @escaping (CMSampleBuffer) -> Void) async throws {
+    func setupCapture(audioCallback: @escaping (AVAudioPCMBuffer) -> Void) async throws {
         setupCount += 1
         self.audioCallback = audioCallback
     }
@@ -63,7 +63,7 @@ final class MockAudioFileWriting: AudioFileWriting {
         recording = true
     }
 
-    func processAudioSample(_ sampleBuffer: CMSampleBuffer) {}
+    func processAudioSample(_ pcmBuffer: AVAudioPCMBuffer) {}
 
     func stopRecording() throws {
         stopCount += 1

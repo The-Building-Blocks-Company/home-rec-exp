@@ -69,8 +69,8 @@ class RecordingController: RecordingControlling {
 
         // Set up capture with audio callback
         let recorder = audioRecorder  // Keep strong reference
-        try await captureManager.setupCapture { sampleBuffer in
-            recorder.processAudioSample(sampleBuffer)
+        try await captureManager.setupCapture { pcmBuffer in
+            recorder.processAudioSample(pcmBuffer)
         }
 
         // Start capturing system audio

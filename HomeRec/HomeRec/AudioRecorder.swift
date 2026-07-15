@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import CoreMedia
 import AVFoundation
 import os
 
@@ -82,14 +81,15 @@ class AudioRecorder: AudioFileWriting {
         Log.recorder.debug("AudioRecorder started: \(fileURL.path, privacy: .private)")
     }
 
-    /// Process audio sample from ScreenCaptureKit
-    /// - Parameter sampleBuffer: Audio sample from SCStream
-    func processAudioSample(_ sampleBuffer: CMSampleBuffer) {
+    /// Process a captured audio buffer (already converted to the canonical
+    /// 48kHz/stereo/Float32/non-interleaved format by the `AudioCapturing` source).
+    /// - Parameter pcmBuffer: Audio buffer from the capture source
+    func processAudioSample(_ pcmBuffer: AVAudioPCMBuffer) {
         // Hand off to the serial queue immediately. `wavWriter` is only ever read
         // there, so a concurrent stop cannot free it mid-read.
         processingQueue.async { [weak self] in
             guard let self, self.encoder != nil else { return }
-            self.processSampleBuffer(sampleBuffer)
+            self.processPCMBuffer(pcmBuffer)
         }
     }
 
@@ -114,15 +114,15 @@ class AudioRecorder: AudioFileWriting {
 
     // MARK: - Private Methods
 
-    /// Process sample buffer on background thread (orchestrator).
-    /// - Parameter sampleBuffer: CMSampleBuffer from ScreenCaptureKit
-    private func processSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
+    /// Process a PCM buffer on background thread (orchestrator).
+    /// - Parameter pcmBuffer: canonical AVAudioPCMBuffer from the capture source
+    private func processPCMBuffer(_ pcmBuffer: AVAudioPCMBuffer) {
         // Runs ~47×/sec on the processing queue. No logging on this hot path;
-        // failures drop the buffer. Conversion + downsampling are extracted into
-        // `nonisolated` units (BL-007); the write goes through the format-agnostic
-        // `AudioFileEncoder` seam (BL-011).
+        // failures drop the buffer. CMSampleBuffer→AVAudioPCMBuffer conversion now
+        // happens at the capture source's delegate boundary (BL-099); downsampling
+        // is still extracted into a `nonisolated` unit (BL-007), and the write goes
+        // through the format-agnostic `AudioFileEncoder` seam (BL-011).
         guard let encoder = encoder else { return }
-        guard let pcmBuffer = AudioSampleConverter.makePCMBuffer(from: sampleBuffer) else { return }
 
         // Waveform visualization (skip the work entirely when nothing is listening).
         if let onWaveformData = onWaveformData {

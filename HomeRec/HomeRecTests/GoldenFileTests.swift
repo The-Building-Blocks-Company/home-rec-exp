@@ -4,15 +4,16 @@
 //
 //  BL-051 / BL-007 behavior guard: feed a deterministic, non-zero buffer
 //  sequence through the full AudioRecorder and assert the produced WAV's PCM
-//  bytes exactly match an independently-computed reference. Interleaved and
-//  non-interleaved inputs must produce identical output. Uses the recorder's
-//  production format (48kHz stereo, the header it always writes).
+//  bytes exactly match an independently-computed reference. Uses the recorder's
+//  production format (48kHz stereo, the header it always writes). Buffers are
+//  fed as canonical non-interleaved AVAudioPCMBuffer (BL-099) — the same shape
+//  every AudioCapturing source delivers; interleaved-source conversion is
+//  covered separately by AudioSampleConverterTests.
 //
 
 import Testing
 import Foundation
 import AVFoundation
-import CoreMedia
 @testable import HomeRec
 
 @MainActor
@@ -52,40 +53,35 @@ struct GoldenFileTests {
     }
 
     /// The full recorded file (header + data).
-    private func recordedBytes(interleaved: Bool) throws -> [UInt8] {
+    private func recordedBytes() throws -> [UInt8] {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }
 
         let recorder = AudioRecorder()
         try recorder.startRecording(to: url, format: .wav)
         for b in 0..<bufferCount {
-            let sb: CMSampleBuffer = interleaved
-                ? SampleBufferFixtures.interleaved(frames: framesPerBuffer, channels: channels) { ch, f in sample(buffer: b, channel: ch, frame: f) }
-                : SampleBufferFixtures.nonInterleaved(frames: framesPerBuffer, channels: channels) { ch, f in sample(buffer: b, channel: ch, frame: f) }
-            recorder.processAudioSample(sb)
+            let pcmBuffer = SampleBufferFixtures.makePCMBuffer(
+                channels: channels, frames: framesPerBuffer, interleaved: false
+            ) { ch, f in sample(buffer: b, channel: ch, frame: f) }
+            recorder.processAudioSample(pcmBuffer)
         }
         try recorder.stopRecording()   // drains the queue, then finalizes
 
         return [UInt8](try Data(contentsOf: url))
     }
 
-    private func recordedPCMBytes(interleaved: Bool) throws -> [UInt8] {
-        Array(try recordedBytes(interleaved: interleaved)[44...])   // strip the 44-byte header
+    private func recordedPCMBytes() throws -> [UInt8] {
+        Array(try recordedBytes()[44...])   // strip the 44-byte header
     }
 
-    @Test("Interleaved input → expected WAV PCM bytes (golden)")
-    func goldenInterleaved() throws {
-        #expect(try recordedPCMBytes(interleaved: true) == expectedPCMBytes())
-    }
-
-    @Test("Non-interleaved input → identical WAV PCM bytes")
-    func goldenNonInterleaved() throws {
-        #expect(try recordedPCMBytes(interleaved: false) == expectedPCMBytes())
+    @Test("Canonical PCM buffer input → expected WAV PCM bytes (golden)")
+    func golden() throws {
+        #expect(try recordedPCMBytes() == expectedPCMBytes())
     }
 
     @Test("WAV header is the expected 48kHz stereo PCM header (unchanged by the encoder seam)")
     func goldenHeader() throws {
-        let bytes = try recordedBytes(interleaved: true)
+        let bytes = try recordedBytes()
         #expect(bytes.count >= 44)
 
         func u32(_ o: Int) -> UInt32 {
