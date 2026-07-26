@@ -127,6 +127,17 @@ final class MockPermissionProviding: PermissionProviding {
     }
 }
 
+/// Poll clock that never returns from a wait, so a deadline built on it never
+/// fires — lets a test hold the "probe still in flight" state open.
+@MainActor
+final class NeverPollClock: PollClock {
+    func sleep(for interval: TimeInterval) async throws {
+        // Long enough to never fire within a test, but still cancellable — an
+        // uncancellable wait would leak a task past the end of the run.
+        try await Task.sleep(nanoseconds: .max / 2)
+    }
+}
+
 /// Poll clock whose waits return immediately, so a poll loop runs at full speed
 /// under test and the suite never sleeps.
 @MainActor

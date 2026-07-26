@@ -44,6 +44,16 @@ protocol AudioSourceProviding: AnyObject {
     /// (e.g. the selected app isn't running). Call before starting capture.
     func validate(_ source: AudioSource) async throws
     /// Currently running apps the picker can offer, excluding Home Rec itself.
+    ///
+    /// ⚠️ **This calls `SCShareableContent` directly, bypassing `PermissionProviding`.**
+    /// That means it can raise the system permission dialog and registers the app
+    /// with TCC — so it must never run on a zero-click path (BL-085). It is safe
+    /// today only because nothing reaches it without a Record click.
+    ///
+    /// **Precondition for BL-100's source picker:** SwiftUI evaluates `Menu`
+    /// content eagerly in several situations, so a naïvely wired picker would call
+    /// this on *popover appearance* — a zero-click prompt. Enumerate only on an
+    /// explicit submenu open, and only when `permissionStatus == .granted`.
     func availableApps() async throws -> [RunningAppInfo]
 }
 

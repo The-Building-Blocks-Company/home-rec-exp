@@ -51,6 +51,10 @@ class RecorderViewModel: ObservableObject {
     /// Set once the user dismisses a *soft* note. Has no effect on the hard block.
     @Published private(set) var installNoticeDismissed = false
 
+    /// True while the registering probe runs ahead of System Settings opening, so
+    /// the button that started it can disable and not be fired twice (BL-087).
+    @Published private(set) var isOpeningSystemSettings = false
+
     /// Whether a recording is actively capturing. Derived from `state`.
     var isRecording: Bool { state == .recording }
 
@@ -109,6 +113,8 @@ class RecorderViewModel: ObservableObject {
     /// The guide panel, created on first use — a menu-bar app may never have
     /// shown a window, so it can't be owned by one.
     private var guidePanel: PermissionGuidePanel?
+    /// Retained alongside the panel so `isOpeningSettings` can be mirrored onto it.
+    private var guideModel: PermissionGuideModel?
     private let installLocationProvider: InstallLocationProviding
     /// The install-location panel, created on first use for the same reason.
     private var installNoticePanel: FloatingPanelHost?
@@ -118,6 +124,9 @@ class RecorderViewModel: ObservableObject {
     /// orders it on screen, which a unit test asserting "translocation blocks
     /// recording" has no business doing. Production never passes this.
     private let installNoticePresenter: (() -> Void)?
+    /// Same idea for the permission guide: production builds a real panel, tests
+    /// substitute a counter so the suite never orders an `NSPanel` on screen.
+    private let guidePresenter: (() -> Void)?
     /// Visible main windows, reported by the windows themselves.
     ///
     /// Deliberately *not* inferred from `NSApp.windows`: at init no window exists
@@ -132,6 +141,10 @@ class RecorderViewModel: ObservableObject {
     /// `didBecomeActive` would otherwise reach every other suite's live view
     /// model, which is both a false pass and a false failure waiting to happen.
     private let notificationCenter: NotificationCenter
+    /// Clock for the registration deadline. Injected so the bounded wait is
+    /// deterministic under test — the suite has a no-sleeps rule.
+    private let pollClock: PollClock
+    private let registrationTimeout: TimeInterval
     private let defaults: UserDefaults
     private let onboardingCompletedKey = "hasCompletedOnboarding"
     private let selectedFormatKey = "selectedFormat"
@@ -146,13 +159,19 @@ class RecorderViewModel: ObservableObject {
         installLocation: InstallLocationProviding? = nil,
         defaults: UserDefaults = .standard,
         installNoticePresenter: (() -> Void)? = nil,
-        notificationCenter: NotificationCenter = .default
+        guidePresenter: (() -> Void)? = nil,
+        notificationCenter: NotificationCenter = .default,
+        pollClock: PollClock? = nil,
+        registrationTimeout: TimeInterval = 2.0
     ) {
         self.notificationCenter = notificationCenter
+        self.pollClock = pollClock ?? SystemPollClock()
+        self.registrationTimeout = registrationTimeout
         let resolvedInstallLocation = installLocation ?? BundleInstallLocation()
         self.installLocationProvider = resolvedInstallLocation
         self.installLocation = resolvedInstallLocation.location
         self.installNoticePresenter = installNoticePresenter
+        self.guidePresenter = guidePresenter
         let resolvedSaveLocation = saveLocation ?? SaveLocationManager(defaults: defaults)
         self.saveLocation = resolvedSaveLocation
         self.controller = controller ?? RecordingController(saveLocation: resolvedSaveLocation)
@@ -380,13 +399,72 @@ class RecorderViewModel: ObservableObject {
     /// do it correctly, the grant will still evaporate on relaunch, and they will
     /// now believe the app simply doesn't work. So neither the guide nor System
     /// Settings is opened in that case.
+    /// Registration ordering (BL-087): an app appears in the Screen & System Audio
+    /// Recording list only once it has made a registering `SCShareableContent`
+    /// call, and the Settings list does not refresh live. Opening the pane in the
+    /// same instant as the first probe therefore lands the user in a list Home Rec
+    /// is not in yet — and the guide then points at a row that does not exist. So
+    /// the probe runs to completion *first*.
+    ///
+    /// Order is guide → probe → pane on purpose: the guide is instant, so a slow
+    /// or hung probe degrades into "panel is up, carrying its own retry button"
+    /// rather than a dead click.
     func openSystemSettings() {
         guard !installLocation.blocksRecording else {
             showInstallLocationNotice()
             return
         }
         showPermissionGuide()
-        permissions.openSystemPreferences()
+        setOpeningSystemSettings(true)
+        Task { @MainActor in
+            await awaitRegistration()
+            setOpeningSystemSettings(false)
+            // Now that the answer is known: if it was already granted, there is
+            // nothing to send the user to Settings for.
+            guard permissionStatus != .granted else { return }
+            permissions.openSystemPreferences()
+        }
+    }
+
+    /// Mirror the in-flight state onto the guide model, which is what the panel's
+    /// button observes.
+    private func setOpeningSystemSettings(_ opening: Bool) {
+        isOpeningSystemSettings = opening
+        guideModel?.isOpeningSettings = opening
+    }
+
+    /// Wait for one authoritative probe, but not forever.
+    ///
+    /// The bound lives here rather than inside `checkPermission()` for two
+    /// reasons. A timeout there would write a false `.denied` into
+    /// `permissionStatus` on a merely slow machine — timeouts must never mutate
+    /// permission state. And escaping `checkPermission`'s `await probe.value`
+    /// early would leave `permissionProbe` set forever, so every later caller
+    /// would join a task that never completes.
+    ///
+    /// The probe is deliberately *not* cancelled when the deadline passes:
+    /// registration is the whole point of running it, and it completes in the
+    /// background either way. We simply stop waiting.
+    private func awaitRegistration() async {
+        let probe = Task { await checkPermission() }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            // Whichever finishes first wins; the loser's resume is dropped.
+            //
+            // Deliberately *not* a task group: a group waits for every child as it
+            // exits scope, so the deadline could never actually win — it would fire,
+            // and then the group would go on waiting for the probe anyway, which is
+            // the opposite of a bounded wait. Everything here is main-actor
+            // isolated, so the once-only flag needs no locking.
+            let resumer = OnceResumer(continuation)
+            Task { @MainActor in
+                await probe.value
+                resumer.resume()
+            }
+            Task { @MainActor [pollClock, registrationTimeout] in
+                try? await pollClock.sleep(for: registrationTimeout)
+                resumer.resume()
+            }
+        }
     }
 
     // MARK: - Install location (BL-082)
@@ -476,8 +554,16 @@ class RecorderViewModel: ObservableObject {
     /// Show the guide panel, creating it on first use.
     func showPermissionGuide() {
         hasSoughtPermission = true
+        if let guidePresenter {
+            guidePresenter()
+            return
+        }
         if guidePanel == nil {
             let model = PermissionGuideModel(permissions: permissions)
+            guideModel = model
+            // If TCC has never been asked, macOS will very likely raise its own
+            // dialog alongside this panel — say so, once (BL-087).
+            model.promptLikely = (permissionStatus == .notDetermined)
             model.onGranted = { [weak self] in
                 // Mirror the grant into the app's own state so every surface
                 // updates, not just the panel.
@@ -652,5 +738,22 @@ class RecorderViewModel: ObservableObject {
             if installLocation.blocksRecording { return "Move to Applications" }
             return permissionStatus != .granted ? "Almost ready" : "Play something, then hit record"
         }
+    }
+}
+
+
+/// Resumes a continuation exactly once, whichever racer gets there first.
+/// Main-actor isolated, so "exactly once" needs no synchronisation.
+@MainActor
+private final class OnceResumer {
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<Void, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume() {
+        continuation?.resume()
+        continuation = nil
     }
 }

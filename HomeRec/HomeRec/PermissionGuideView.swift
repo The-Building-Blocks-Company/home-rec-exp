@@ -56,6 +56,26 @@ struct PermissionGuideView: View {
                     .font(.custom("Inter-Regular", size: 11, relativeTo: .caption))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                // Two surfaces asking one question at the same instant is the
+                // classic "which one is real?" trust break. Only shown when a
+                // system prompt is actually likely, so it disappears on return
+                // visits (BL-087).
+                if model.promptLikely {
+                    Text("If macOS shows its own permission dialog, that's this same request — answering it there is enough.")
+                        .font(.custom("Inter-Regular", size: 12, relativeTo: .body))
+                        .foregroundColor(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                // The residual empty-list case. An app only joins that list once
+                // it has asked, and the list does not always refresh live — so a
+                // user can still arrive to no row. One quiet line turns a dead end
+                // into a recoverable one (BL-087).
+                Text("If Home Rec isn't in the list, click + and add it from your Applications folder.")
+                    .font(.custom("Inter-Regular", size: 11, relativeTo: .caption))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack {
@@ -65,7 +85,11 @@ struct PermissionGuideView: View {
                 case .timedOut:
                     Button("Check again") { model.resumePolling() }
                 case .awaitingGrant:
+                    // Disabled while the registering probe is in flight, so the
+                    // click cannot be fired twice. No spinner: the probe is
+                    // typically well under the ~100 ms that makes waiting felt.
                     Button("Open System Settings", action: onOpenSettings)
+                        .disabled(model.isOpeningSettings)
                 }
                 Spacer()
                 Button(model.state == .granted ? "Done" : "Close", action: onDismiss)

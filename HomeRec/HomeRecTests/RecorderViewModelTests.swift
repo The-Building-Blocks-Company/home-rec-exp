@@ -118,8 +118,19 @@ struct RecorderViewModelTests {
     @Test("Recovery action .openSettings opens System Settings and dismisses the error")
     func recoveryOpensSettings() async {
         let controller = MockRecordingControlling()
-        let permission = MockPermissionProviding(.granted)
-        let viewModel = RecorderViewModel(controller: controller, permissions: permission, clock: ManualClock())
+        // Denied, because that is what a permission-related stream failure means —
+        // and because opening Settings is now gated on the answer (BL-087): an
+        // already-granted user has nothing to go there for.
+        let permission = MockPermissionProviding(.denied)
+        let viewModel = RecorderViewModel(
+            controller: controller,
+            permissions: permission,
+            clock: ManualClock(),
+            guidePresenter: {},
+            pollClock: ImmediatePollClock(),
+            registrationTimeout: 0
+        )
+        viewModel.permissionStatus = .granted   // stale, as it would be mid-recording
 
         await viewModel.startRecording()
         controller.emitStreamError("permission turned off")
@@ -127,6 +138,9 @@ struct RecorderViewModelTests {
         #expect(viewModel.showError)
 
         viewModel.performRecovery()
+        // Opening Settings is now async: it waits for the registering probe first
+        // so the pane doesn't render a list Home Rec isn't in yet (BL-087).
+        for _ in 0..<2000 where permission.openSettingsCount == 0 { await Task.yield() }
 
         #expect(permission.openSettingsCount == 1)
         #expect(viewModel.showError == false)

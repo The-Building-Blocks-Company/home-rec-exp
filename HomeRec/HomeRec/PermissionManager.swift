@@ -58,17 +58,19 @@ class PermissionManager: PermissionProviding {
         }
     }
 
-    /// Probe, and if not granted, open the pane where the user can flip the toggle.
+    /// Probe, prompting if macOS still can.
     ///
     /// The system prompt only ever appears once; after a deny or a dismiss there is
     /// no second chance at it, which is why the in-app guide (BL-081) is the real
     /// recovery path rather than a nicety.
+    ///
+    /// This deliberately does **not** open System Settings any more (BL-087). It
+    /// used to, as a side effect, which meant the record-while-denied path opened
+    /// the pane once with no guide attached and then again via the error's
+    /// recovery action. The view model owns every decision to open Settings, so
+    /// that every one of them is registered, guided, and granted-gated.
     func requestPermission(_ kind: PermissionKind = .screenCapture) async -> Bool {
-        if await checkPermission(kind) == .granted {
-            return true
-        }
-        openSystemPreferences(for: kind)
-        return false
+        await checkPermission(kind) == .granted
     }
 
     /// Open System Settings at the pane for `kind`.

@@ -41,6 +41,16 @@ final class PermissionGuideModel: ObservableObject {
     /// Called once when permission is observed as granted.
     var onGranted: (() -> Void)?
 
+    /// Whether macOS is likely to raise its own permission dialog alongside this
+    /// panel — true when the guide opened from a state where TCC had never been
+    /// asked. Drives one extra line of copy; see `PermissionGuideView` (BL-087).
+    @Published var promptLikely = false
+
+    /// True while the registering probe runs ahead of System Settings opening.
+    /// Lives on the model, not passed into the panel: the panel builds its content
+    /// once, so a value captured there would be frozen at construction (BL-087).
+    @Published var isOpeningSettings = false
+
     var navigationHint: String { kind.navigationHint }
 
     init(

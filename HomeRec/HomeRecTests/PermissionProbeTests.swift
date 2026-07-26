@@ -156,4 +156,78 @@ struct PermissionProbeTests {
         #expect(viewModel.permissionStatus == .granted)
         #expect(permissions.checkCount >= 1)
     }
+
+    // MARK: - Registration before System Settings (BL-087)
+
+    private func makeSettingsViewModel(
+        _ permissions: MockPermissionProviding,
+        clock: PollClock
+    ) -> RecorderViewModel {
+        RecorderViewModel(
+            controller: MockRecordingControlling(),
+            permissions: permissions,
+            clock: ManualClock(),
+            guidePresenter: {},          // no real NSPanel in a unit test
+            notificationCenter: center,
+            pollClock: clock,
+            registrationTimeout: 0
+        )
+    }
+
+    /// The defect from the v1.0.1 manual pass: the pane opened before the app had
+    /// ever registered with TCC, so Home Rec was absent from the list and the user
+    /// had to add it with "+". An app joins that list only by making the
+    /// registering call, so it must complete before the pane opens.
+    @Test("System Settings does not open until a registering probe has completed")
+    func settingsWaitsForRegistration() async {
+        let permissions = MockPermissionProviding(.denied)
+        permissions.holdsChecks = true
+        let viewModel = makeSettingsViewModel(permissions, clock: NeverPollClock())
+
+        viewModel.openSystemSettings()
+        for _ in 0..<200 where permissions.checkCount < 1 { await Task.yield() }
+
+        // Probe in flight, pane still shut.
+        #expect(permissions.checkCount >= 1)
+        #expect(permissions.openSettingsCount == 0, "The pane must not open ahead of registration")
+
+        permissions.holdsChecks = false
+        permissions.resumePendingChecks()
+        for _ in 0..<2000 where permissions.openSettingsCount == 0 { await Task.yield() }
+
+        #expect(permissions.openSettingsCount == 1)
+    }
+
+    /// A hung probe must not become a dead click: past the deadline the pane opens
+    /// anyway. The probe is left running — registration is the point of it.
+    @Test("A probe that never returns still lets System Settings open")
+    func settingsOpensAfterRegistrationDeadline() async {
+        let permissions = MockPermissionProviding(.denied)
+        permissions.holdsChecks = true
+        // ImmediatePollClock makes the deadline fire at once, deterministically.
+        let viewModel = makeSettingsViewModel(permissions, clock: ImmediatePollClock())
+
+        viewModel.openSystemSettings()
+        for _ in 0..<2000 where permissions.openSettingsCount == 0 { await Task.yield() }
+
+        #expect(permissions.openSettingsCount == 1)
+
+        permissions.holdsChecks = false
+        permissions.resumePendingChecks()
+    }
+
+    /// Now that the answer is known before opening: an already-granted user has no
+    /// reason to be sent to System Settings at all.
+    @Test("An already-granted user is not sent to System Settings")
+    func grantedUserIsNotSentToSettings() async {
+        let permissions = MockPermissionProviding(.granted)
+        let viewModel = makeSettingsViewModel(permissions, clock: NeverPollClock())
+
+        viewModel.openSystemSettings()
+        for _ in 0..<2000 where permissions.checkCount < 1 { await Task.yield() }
+        for _ in 0..<200 { await Task.yield() }
+
+        #expect(viewModel.permissionStatus == .granted)
+        #expect(permissions.openSettingsCount == 0)
+    }
 }
