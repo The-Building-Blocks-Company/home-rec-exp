@@ -7,14 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> **Target: 1.0.1** — a permission-funnel patch. The v1.1 feature wave (per-app
-> capture, mic input, monitoring) is tracked separately and is not in this release.
-> Version numbers are bumped at release time, so `MARKETING_VERSION` still reads 1.0.
+_Nothing yet._
+
+---
+
+## [1.0.1] - 2026-07-26
+
+> A permission-funnel patch. Everything here is about the gap between downloading
+> Home Rec and successfully granting it permission — the point where first-time
+> users were silently getting stuck. No change to recording, formats, or output.
+> The v1.1 feature wave (per-app capture, mic input, monitoring) is separate.
 
 ### Added
 - **Permission guide that stays with you** — Granting Screen Recording is a hard gate: until it's done, Home Rec can't record anything. Previously "Open System Settings" fired off a URL and left you there. Now a small floating panel stays on screen while you're in System Settings, tells you **which section to look under**, and notices the moment you grant permission — no need to switch back to Home Rec and check. (BL-081)
 - **Menu-bar overflow menu** — Secondary actions (Show Window, Export Diagnostics, Report a Problem, About, Quit) moved out of the popover footer into a native menu, reachable from a "•••" button in the popover or by **right-clicking the menu bar icon**. The popover keeps its primary surface — record button, live waveform, last recording — with four flat buttons and a divider removed. Adds **About Home Rec**, which previously had no entry point. (BL-110)
-
 - **Warning when Home Rec is running from the disk image** — Opening Home Rec by double-clicking it *on the mounted DMG*, rather than dragging it to Applications first, makes macOS run it from a randomised temporary path. Permission granted to that copy is tied to the throwaway path and silently disappears on the next launch — the one situation that genuinely looks like "the app isn't in the permission list". Home Rec now detects this, refuses to record rather than walking you into a grant that cannot survive, and says what to do instead, with a Reveal in Finder button. Running from anywhere else that isn't `/Applications` (a custom folder, `~/Applications`) is left alone apart from a dismissible note — that's a legitimate choice and permission works fine there. (BL-082a)
 
 ### Changed

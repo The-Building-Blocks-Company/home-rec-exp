@@ -3,10 +3,10 @@
 # build-dmg.sh — Archive, Developer ID sign, notarize, staple, and package
 # Home Rec as a distributable .dmg. (BL-030–033)
 #
-# ⚠️ UNTESTED SCAFFOLD: this orchestrates the standard direct-distribution flow
-# but has not been run. It requires an Apple Developer account, a Developer ID
-# Application identity in your Keychain, and a stored notarytool profile. No
-# secrets are embedded; everything sensitive comes from your environment/Keychain.
+# Run end-to-end for the v1.0 release (2026-06-04). Requires an Apple Developer
+# account, a Developer ID Application identity in your Keychain, and a stored
+# notarytool profile. No secrets are embedded; everything sensitive comes from
+# your environment/Keychain.
 #
 # Prerequisites:
 #   - Xcode + command line tools
