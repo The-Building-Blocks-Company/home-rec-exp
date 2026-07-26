@@ -13,11 +13,17 @@ struct MenuBarPopoverView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // App logo
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 32, height: 32)
+            // Header: logo, with secondary actions collected under "•••" (BL-110)
+            HStack(alignment: .top) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 32, height: 32)
+
+                Spacer()
+
+                OverflowMenuButton()
+            }
 
             // Status row
             HStack(spacing: 8) {
@@ -114,46 +120,6 @@ struct MenuBarPopoverView: View {
                 }
             }
 
-            Divider()
-
-            // Footer row
-            HStack {
-                Button("Show window") {
-                    NSApp.activate(ignoringOtherApps: true)
-                    if let window = NSApp.windows.first(where: { $0.title == "Home Rec" || $0.contentView is NSHostingView<AnyView> }) {
-                        window.makeKeyAndOrderFront(nil)
-                    } else {
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
-                }
-                .buttonStyle(.borderless)
-                .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
-
-                Spacer()
-
-                Button("Quit") {
-                    NSApp.terminate(nil)
-                }
-                .buttonStyle(.borderless)
-                .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
-                .foregroundColor(.secondary)
-            }
-
-            // Help row
-            HStack {
-                Button("Export diagnostics…") {
-                    Diagnostics.exportReport()
-                }
-
-                Spacer()
-
-                Button("Report a problem") {
-                    Diagnostics.reportProblem()
-                }
-            }
-            .buttonStyle(.borderless)
-            .font(.custom("Inter-Regular", size: 11, relativeTo: .caption))
-            .foregroundColor(.secondary)
         }
         .padding(16)
         .frame(width: 280)
