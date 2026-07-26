@@ -7,12 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> **Status (paused 2026-05-26).** Reliable-core and human-readiness work is complete
-> and on PR #1 (`reliable-core-and-shippable` → `main`), with 37 unit tests passing
-> under Thread Sanitizer. **Before a real release:** produce a notarized DMG via
-> `scripts/build-dmg.sh` (needs a Developer ID Application certificate + a notarytool
-> profile — `create-dmg` is installed), verify the CI workflow's first run, and do a
-> manual GUI pass. Distribution is the resume point.
+> **Target: 1.0.1** — a permission-funnel patch. The v1.1 feature wave (per-app
+> capture, mic input, monitoring) is tracked separately and is not in this release.
+> Version numbers are bumped at release time, so `MARKETING_VERSION` still reads 1.0.
+
+### Added
+- **Permission guide that stays with you** — Granting Screen Recording is a hard gate: until it's done, Home Rec can't record anything. Previously "Open System Settings" fired off a URL and left you there. Now a small floating panel stays on screen while you're in System Settings, tells you **which section to look under**, and notices the moment you grant permission — no need to switch back to Home Rec and check. (BL-081)
+- **Menu-bar overflow menu** — Secondary actions (Show Window, Export Diagnostics, Report a Problem, About, Quit) moved out of the popover footer into a native menu, reachable from a "•••" button in the popover or by **right-clicking the menu bar icon**. The popover keeps its primary surface — record button, live waveform, last recording — with four flat buttons and a divider removed. Adds **About Home Rec**, which previously had no entry point. (BL-110)
+
+### Changed
+- **Permission copy now says where to actually look** — macOS 15+ splits this permission into "Screen & System Audio Recording" and "System Audio Recording Only". Home Rec appears in the **first**, because it captures audio through ScreenCaptureKit. Our own reassurance — "only captures audio, not your screen" — was true and sent people to the second list, where the app isn't, making it look unlisted. The reassurance stays; a separate line now names the correct section *and* the one it's easy to confuse it with. (BL-081)
+- **Permission checks no longer race each other** — Focus-change re-probes and the new guide polling could overlap, and the slower result won: a stale "denied" could land after a fresh "granted", leaving the app insisting permission was missing seconds after you granted it. Probes are now single-flighted, so overlapping callers share one result. (BL-081)
+
+### Fixed
+- **Removed a stray `Info.plist` shipped inside the app bundle** — `HomeRec/Info.plist` was never wired into the build (`INFOPLIST_FILE` was unset and `GENERATE_INFOPLIST_FILE` was on), so Xcode synthesised the real one and ignored it — but the file *was* still copied into `Contents/Resources/`, meaning every build including v1.0 shipped a second, inert plist that macOS never reads. Deleted, along with two keys it contained that never reached the product. Added `InfoPlistTests`, which assert against the **built product** rather than the repo — the distinction the defect turned on. (BL-084)
+- **Guide polling could outlive the guide** — Closing the panel via its titlebar button bypassed the dismiss path, and the polling loop retained its own model, so the cleanup meant to stop it could never run. Both fixed; covered by tests. (BL-081)
+
+### Internal
+- **Capture callback unified on `AVAudioPCMBuffer`** — `AudioCapturing` now delivers `AVAudioPCMBuffer` instead of `CMSampleBuffer`, converted once at the ScreenCaptureKit boundary. Core Audio Taps deliver `AudioBufferList` and `AVAudioEngine` delivers `AVAudioPCMBuffer`, so unifying on one type now means later capture sources are an implementation swap rather than a protocol change. No behaviour change; golden-file test unchanged. (BL-099)
+- **Per-application capture groundwork** — New `AudioSource` (`.systemAll` / `.app(bundleID:)`) and `AudioSourceManager`, which persists the choice, enumerates running apps, and validates a source before recording starts so an unrunnable app fails pre-flight with no partial file. `ScreenCaptureAudioManager` builds a per-process `SCContentFilter` when an app is selected. **No user-facing picker yet** — the menu UI and validation against real DAWs are still outstanding. The all-system-audio path is byte-for-byte unchanged. (BL-100)
+- **`PermissionProviding` generalised** — Every method now takes a `PermissionKind` (defaulted, so existing call sites are untouched), and the Settings section names, deep-link anchor, and navigation copy live together on `PermissionKind` because they change as a unit. Microphone permission (BL-130) slots in without touching the seam again. (BL-081)
+
+---
+
+## [1.0.0] - 2026-06-04
+
+> First public release. Signed, notarized `.dmg` at
+> [releases/latest](https://github.com/melissa-pereira-deel/home-rec/releases/latest).
 
 ### Changed
 - **Sentence-case button labels** — Main and menu-bar buttons now use sentence case ("Stop recording", "Start recording", "Choose folder…", "Keep recording", "Export diagnostics…", "Report a problem", "Show window", "Get started", "Open settings", "Try again") for a softer, less shouty feel. Proper nouns stay capitalized (Finder, Home Rec, System Settings, Desktop, OK).
