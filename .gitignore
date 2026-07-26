@@ -63,6 +63,10 @@ favicon.svg
 favicon.ico
 apple-touch-icon.png
 
+# The website is its own repo (home-rec-site) and deploys from there.
+# A local copy here would be a second, silently-diverging source of truth.
+home-rec-site-main/
+
 # Vercel deploy config — describes how the website is deployed, not how the
 # app is built. Kept local alongside the website HTML files.
 vercel.json
