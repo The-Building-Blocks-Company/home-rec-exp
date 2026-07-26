@@ -18,10 +18,13 @@ final class MockAudioCapturing: AudioCapturing {
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var cleanupCount = 0
+    /// The source passed to the most recent `setupCapture`, for assertions (BL-100).
+    private(set) var lastSource: AudioSource?
     private var audioCallback: ((AVAudioPCMBuffer) -> Void)?
 
-    func setupCapture(audioCallback: @escaping (AVAudioPCMBuffer) -> Void) async throws {
+    func setupCapture(source: AudioSource, audioCallback: @escaping (AVAudioPCMBuffer) -> Void) async throws {
         setupCount += 1
+        lastSource = source
         self.audioCallback = audioCallback
     }
 
@@ -84,6 +87,34 @@ final class MockPermissionProviding: PermissionProviding {
     func checkPermission() async -> PermissionStatus { status }
     func requestPermission() async -> Bool { status == .granted }
     func openSystemPreferences() { openSettingsCount += 1 }
+}
+
+@MainActor
+final class MockAudioSourceProviding: AudioSourceProviding {
+    var selectedSource: AudioSource
+    var availableAppsResult: [RunningAppInfo] = []
+    /// If set, `validate(_:)` throws this instead of succeeding.
+    var validateError: Error?
+    private(set) var setCount = 0
+    private(set) var validateCount = 0
+
+    init(selectedSource: AudioSource = .systemAll) {
+        self.selectedSource = selectedSource
+    }
+
+    func setSelectedSource(_ source: AudioSource) {
+        setCount += 1
+        selectedSource = source
+    }
+
+    func validate(_ source: AudioSource) async throws {
+        validateCount += 1
+        if let validateError { throw validateError }
+    }
+
+    func availableApps() async throws -> [RunningAppInfo] {
+        availableAppsResult
+    }
 }
 
 @MainActor

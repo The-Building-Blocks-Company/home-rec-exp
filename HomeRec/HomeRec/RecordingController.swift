@@ -21,6 +21,7 @@ class RecordingController: RecordingControlling {
     private let captureManager: AudioCapturing
     private let audioRecorder: AudioFileWriting
     private let saveLocation: SaveLocationProviding
+    private let audioSource: AudioSourceProviding
 
     private var currentRecordingURL: URL?
 
@@ -35,11 +36,13 @@ class RecordingController: RecordingControlling {
     init(
         captureManager: AudioCapturing? = nil,
         audioRecorder: AudioFileWriting? = nil,
-        saveLocation: SaveLocationProviding? = nil
+        saveLocation: SaveLocationProviding? = nil,
+        audioSource: AudioSourceProviding? = nil
     ) {
         self.captureManager = captureManager ?? ScreenCaptureAudioManager()
         self.audioRecorder = audioRecorder ?? AudioRecorder()
         self.saveLocation = saveLocation ?? SaveLocationManager()
+        self.audioSource = audioSource ?? AudioSourceManager()
         self.captureManager.onStreamError = { [weak self] message in
             self?.onStreamError?(message)
         }
@@ -52,6 +55,11 @@ class RecordingController: RecordingControlling {
     /// - Throws: Error if recording cannot start
     @MainActor
     func startRecording(format: AudioFormat) async throws -> URL {
+        // Pre-flight: fail before touching disk if the selected source isn't
+        // capturable right now (BL-100 — e.g. the chosen app isn't running).
+        let source = audioSource.selectedSource
+        try await audioSource.validate(source)
+
         // Generate file path (extension follows the chosen format).
         let fileURL = generateFilePath(format: format)
 
@@ -69,7 +77,7 @@ class RecordingController: RecordingControlling {
 
         // Set up capture with audio callback
         let recorder = audioRecorder  // Keep strong reference
-        try await captureManager.setupCapture { pcmBuffer in
+        try await captureManager.setupCapture(source: source) { pcmBuffer in
             recorder.processAudioSample(pcmBuffer)
         }
 

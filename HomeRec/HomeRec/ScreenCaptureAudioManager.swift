@@ -16,6 +16,8 @@ enum ScreenCaptureAudioError: Error, LocalizedError {
     case noDisplaysAvailable
     case streamCreationFailed
     case startCaptureFailed(Error)
+    /// The `.app` source's bundle ID has no matching running `SCRunningApplication` (BL-100).
+    case appNotRunning(String)
 
     var errorDescription: String? {
         switch self {
@@ -27,6 +29,8 @@ enum ScreenCaptureAudioError: Error, LocalizedError {
             return "Failed to create capture stream"
         case .startCaptureFailed(let error):
             return "Failed to start audio capture: \(error.localizedDescription)"
+        case .appNotRunning(let bundleID):
+            return "The selected app (\(bundleID)) is not currently running."
         }
     }
 
@@ -40,6 +44,8 @@ enum ScreenCaptureAudioError: Error, LocalizedError {
             return "Try restarting the application"
         case .startCaptureFailed:
             return "Check if another app is already capturing system audio"
+        case .appNotRunning:
+            return "Open the app, or choose a different capture source."
         }
     }
 }
@@ -58,13 +64,16 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
 
     // MARK: - Public Methods
 
-    /// Set up system audio capture
-    /// - Parameter callback: Closure called for each audio buffer
-    /// - Throws: ScreenCaptureAudioError if setup fails
-    func setupCapture(audioCallback: @escaping (AVAudioPCMBuffer) -> Void) async throws {
+    /// Set up capture for `source` (BL-100: all system audio or a specific running app).
+    /// - Parameters:
+    ///   - source: what to capture. `.app` resolves to the matching `SCRunningApplication`.
+    ///   - audioCallback: Closure called for each audio buffer
+    /// - Throws: ScreenCaptureAudioError if setup fails, or `.appNotRunning` if `source`
+    ///   is `.app` and no running app matches its bundle ID.
+    func setupCapture(source: AudioSource, audioCallback: @escaping (AVAudioPCMBuffer) -> Void) async throws {
         self.audioCallback = audioCallback
 
-        // Get available displays
+        // Get available displays (and, for .app, running applications)
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
             onScreenWindowsOnly: false
@@ -93,8 +102,18 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
         config.showsCursor = false
         config.scalesToFit = false
 
-        // Create content filter (captures all audio from display)
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        // Content filter: all display audio, or a single app's audio (BL-100).
+        let filter: SCContentFilter
+        switch source {
+        case .systemAll:
+            filter = SCContentFilter(display: display, excludingWindows: [])
+        case .app(let bundleID):
+            guard let app = content.applications.first(where: { $0.bundleIdentifier == bundleID }) else {
+                Log.capture.error("Selected app not running for per-app capture")
+                throw ScreenCaptureAudioError.appNotRunning(bundleID)
+            }
+            filter = SCContentFilter(display: display, including: [app], exceptingWindows: [])
+        }
 
         // Create stream
         stream = SCStream(filter: filter, configuration: config, delegate: self)
