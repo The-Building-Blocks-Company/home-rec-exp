@@ -145,6 +145,63 @@ struct PermissionGuideTests {
         #expect(permissions.checkCount == settled)
     }
 
+    // MARK: - The poll budget (BL-085)
+
+    /// An abandoned panel used to probe `SCShareableContent` once a second for the
+    /// life of the process. It now gives up — and says so, because a panel that
+    /// silently stopped working would strand someone who grants a minute late.
+    @Test("Polling gives up after its budget and reports it")
+    func pollingTimesOut() async {
+        let permissions = MockPermissionProviding(.denied)
+        let model = PermissionGuideModel(
+            permissions: permissions,
+            clock: ImmediatePollClock(),
+            interval: 0,
+            maxProbes: 5
+        )
+
+        model.startPolling()
+        while model.state != .timedOut { await Task.yield() }
+
+        #expect(permissions.checkCount == 5)
+        for _ in 0..<50 { await Task.yield() }
+        #expect(permissions.checkCount == 5, "Timing out must actually stop the loop")
+    }
+
+    @Test("Check again resumes polling and can still detect the grant")
+    func resumeAfterTimeout() async {
+        let permissions = MockPermissionProviding(.denied)
+        let model = PermissionGuideModel(
+            permissions: permissions,
+            clock: ImmediatePollClock(),
+            interval: 0,
+            maxProbes: 3
+        )
+
+        model.startPolling()
+        while model.state != .timedOut { await Task.yield() }
+
+        permissions.status = .granted
+        model.resumePolling()
+        while model.state != .granted { await Task.yield() }
+        #expect(model.state == .granted)
+    }
+
+    @Test("Resume does nothing unless the loop actually timed out")
+    func resumeIsInertWhileWaiting() async {
+        let permissions = MockPermissionProviding(.denied)
+        let model = PermissionGuideModel(
+            permissions: permissions,
+            clock: ImmediatePollClock(),
+            interval: 0,
+            maxProbes: 100
+        )
+        model.resumePolling()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(permissions.checkCount == 0)
+        #expect(model.state == .awaitingGrant)
+    }
+
     // MARK: - The overlapping-probe race
 
     /// The failure this guards is the one the whole feature exists to prevent:

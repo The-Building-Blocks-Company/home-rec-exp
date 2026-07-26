@@ -90,8 +90,21 @@ final class MockPermissionProviding: PermissionProviding {
     var holdsChecks = false
     private var pending: [CheckedContinuation<Void, Never>] = []
 
+    /// Silent launch-time reads, counted separately from authoritative probes —
+    /// the whole point of BL-085 is *which* of the two a call site uses.
+    private(set) var preflightCount = 0
+    /// What `preflight` reports, independent of `status`. Defaults to tracking
+    /// `status`; pin it to model the real API's latching, where the system value
+    /// moves on while preflight keeps answering with what it saw at launch.
+    var preflightStatus: PermissionStatus?
+
     init(_ status: PermissionStatus = .granted) {
         self.status = status
+    }
+
+    func preflight(_ kind: PermissionKind = .screenCapture) -> PermissionStatus {
+        preflightCount += 1
+        return preflightStatus ?? status
     }
 
     func checkPermission(_ kind: PermissionKind = .screenCapture) async -> PermissionStatus {

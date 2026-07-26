@@ -129,17 +129,28 @@ class RecorderViewModel: ObservableObject {
         }
         refreshSaveLocationDisplay()
         // Re-probe permission whenever the app regains focus, so granting Screen
-        // Recording in System Settings takes effect without a relaunch.
+        // Recording in System Settings takes effect without a relaunch (BL-040).
+        //
+        // Skipped once permission is granted — which is every activation for every
+        // already-set-up user. That probe is an XPC round-trip that can also raise
+        // the system prompt, and re-asking a question already answered "yes" buys
+        // nothing. A revocation mid-session surfaces when recording next starts.
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.checkPermission() }
+            Task { @MainActor in
+                guard let self, self.permissionStatus != .granted else { return }
+                await self.checkPermission()
+            }
         }
-        Task {
-            await checkPermission()
-        }
+        // Launch uses the *silent* read (BL-085). The authoritative probe can raise
+        // the system prompt, and firing it here throws a permission dialog at
+        // someone who has not asked for anything yet — the app wanting to know its
+        // own state is not a good enough reason to interrupt. Preflight is accurate
+        // at launch, which is exactly and only what is needed here.
+        permissionStatus = self.permissions.preflight()
         // A translocated bundle is broken from the first launch, so say so at
         // launch rather than waiting for the user to hit a wall.
         if self.installLocation.blocksRecording {

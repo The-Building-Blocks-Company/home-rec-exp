@@ -15,6 +15,9 @@ final class PermissionGuideModel: ObservableObject {
     enum State: Equatable {
         case awaitingGrant
         case granted
+        /// Gave up waiting. The panel stays up and offers to resume — stopping
+        /// silently would strand someone who grants permission a minute later.
+        case timedOut
     }
 
     @Published private(set) var state: State = .awaitingGrant
@@ -28,6 +31,11 @@ final class PermissionGuideModel: ObservableObject {
     private let permissions: PermissionProviding
     private let clock: PollClock
     private let interval: TimeInterval
+    /// Probes allowed before giving up. Expressed as a count rather than a
+    /// deadline so the bound is exact under an injected clock — a wall-clock
+    /// timeout would make the test either slow or flaky.
+    private let maxProbes: Int
+    private var probesThisRun = 0
     private var pollTask: Task<Void, Never>?
 
     /// Called once when permission is observed as granted.
@@ -39,12 +47,14 @@ final class PermissionGuideModel: ObservableObject {
         kind: PermissionKind = .screenCapture,
         permissions: PermissionProviding,
         clock: PollClock? = nil,
-        interval: TimeInterval = 1.0
+        interval: TimeInterval = 1.0,
+        maxProbes: Int = 600   // ~10 minutes at the default 1 s interval
     ) {
         self.kind = kind
         self.permissions = permissions
         self.clock = clock ?? SystemPollClock()
         self.interval = interval
+        self.maxProbes = maxProbes
     }
 
     deinit {
@@ -68,6 +78,8 @@ final class PermissionGuideModel: ObservableObject {
     /// iteration finds `nil` and exits on its own.
     func startPolling() {
         guard pollTask == nil else { return }
+        probesThisRun = 0
+        if state == .timedOut { state = .awaitingGrant }
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let step = await self?.pollStep() else { return }
@@ -96,7 +108,22 @@ final class PermissionGuideModel: ObservableObject {
     /// Split out so the strong reference to `self` ends when this returns.
     private func pollStep() async -> PollStep {
         await probeOnce()
-        return state == .granted ? .finished : .wait(clock, interval)
+        if state == .granted { return .finished }
+        probesThisRun += 1
+        // An abandoned panel would otherwise probe `SCShareableContent` once a
+        // second for the life of the process. Give up, but say so — see `.timedOut`.
+        if probesThisRun >= maxProbes {
+            state = .timedOut
+            stopPolling()
+            return .finished
+        }
+        return .wait(clock, interval)
+    }
+
+    /// Resume after a timeout, from the "Check again" affordance.
+    func resumePolling() {
+        guard state == .timedOut else { return }
+        startPolling()
     }
 
     /// One probe. Separated from the loop so the state transition can be tested

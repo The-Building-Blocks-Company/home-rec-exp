@@ -219,11 +219,10 @@ struct RecorderView: View {
             OnboardingView()
                 .environmentObject(viewModel)
         }
-        .onAppear {
-            Task {
-                await viewModel.checkPermission()
-            }
-        }
+        // No permission probe here (BL-085). Showing this window activates the app,
+        // and the view model's activation observer already re-probes when permission
+        // is missing — so a probe here was redundant, and the authoritative one it
+        // used to call can raise a system prompt merely because a window appeared.
     }
 }
 

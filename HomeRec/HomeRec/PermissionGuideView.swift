@@ -18,9 +18,17 @@ struct PermissionGuideView: View {
     var onOpenSettings: () -> Void
     var onDismiss: () -> Void
 
+    private var title: String {
+        switch model.state {
+        case .granted:      return "Permission granted"
+        case .timedOut:     return "Still waiting"
+        case .awaitingGrant: return "Waiting for permission"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(model.state == .granted ? "Permission granted" : "Waiting for permission")
+            Text(title)
                 .font(.custom("Archivo", size: 15, relativeTo: .headline))
                 .fontWeight(.medium)
 
@@ -28,6 +36,13 @@ struct PermissionGuideView: View {
                 Text("You're ready to record.")
                     .font(.custom("Inter-Regular", size: 12, relativeTo: .body))
                     .foregroundColor(.secondary)
+            } else if model.state == .timedOut {
+                // Stopped checking rather than probe forever. Say so plainly and
+                // offer the way back — a panel that quietly stopped working would
+                // strand someone who granted permission a minute too late.
+                Text("Home Rec stopped checking. If you've granted permission, pick it up again below.")
+                    .font(.custom("Inter-Regular", size: 12, relativeTo: .body))
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 // The navigation instruction. Naming the section the user would
                 // otherwise search — and not find Home Rec in — is the whole point
@@ -44,7 +59,12 @@ struct PermissionGuideView: View {
             }
 
             HStack {
-                if model.state != .granted {
+                switch model.state {
+                case .granted:
+                    EmptyView()
+                case .timedOut:
+                    Button("Check again") { model.resumePolling() }
+                case .awaitingGrant:
                     Button("Open System Settings", action: onOpenSettings)
                 }
                 Spacer()

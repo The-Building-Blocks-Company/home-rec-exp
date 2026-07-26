@@ -9,6 +9,7 @@
 import Foundation
 import ScreenCaptureKit
 import AppKit
+import CoreGraphics
 
 /// Permission status states
 enum PermissionStatus {
@@ -20,11 +21,31 @@ enum PermissionStatus {
 /// Manages the system permissions Home Rec depends on.
 class PermissionManager: PermissionProviding {
 
-    /// Probe current permission state.
+    /// Silent, launch-only read. See `PermissionProviding.preflight` for the
+    /// latching behaviour that makes this unusable for observing changes.
+    ///
+    /// `CGPreflightScreenCaptureAccess` is **not** deprecated — plain
+    /// `API_AVAILABLE(macos(10.15))` in `CGWindow.h` on the current SDK. The
+    /// project previously believed otherwise; the real reason it can't replace
+    /// `checkPermission` is that its answer is frozen at process start (BL-085).
+    ///
+    /// Returns `.denied` rather than `.notDetermined` when access is absent: the
+    /// API is a `Bool` and cannot distinguish "never asked" from "refused", and
+    /// the UI treats both identically (offer the guide).
+    func preflight(_ kind: PermissionKind = .screenCapture) -> PermissionStatus {
+        switch kind {
+        case .screenCapture:
+            return CGPreflightScreenCaptureAccess() ? .granted : .denied
+        }
+    }
+
+    /// Probe current permission state, authoritatively and live.
     ///
     /// For `.screenCapture` this doubles as registration: a `SCShareableContent`
     /// call is what puts Home Rec into the System Settings list in the first
     /// place, and on a fresh install it triggers the one-time system prompt.
+    /// Because of that side effect it must stay behind a deliberate user action
+    /// or the on-screen guide — never on launch or idle activation (BL-085).
     func checkPermission(_ kind: PermissionKind = .screenCapture) async -> PermissionStatus {
         switch kind {
         case .screenCapture:
