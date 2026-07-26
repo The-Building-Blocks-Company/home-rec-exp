@@ -56,6 +56,12 @@ class RecorderViewModel: ObservableObject {
     private var recordingStartTime: Date?
     private var longRecordingWarned = false
     private var activationObserver: NSObjectProtocol?
+    /// In-flight permission probe, so overlapping callers share one result
+    /// rather than racing to write `permissionStatus`. See `checkPermission()`.
+    private var permissionProbe: Task<PermissionStatus, Never>?
+    /// The guide panel, created on first use — a menu-bar app may never have
+    /// shown a window, so it can't be owned by one.
+    private var guidePanel: PermissionGuidePanel?
     private let defaults: UserDefaults
     private let onboardingCompletedKey = "hasCompletedOnboarding"
     private let selectedFormatKey = "selectedFormat"
@@ -103,9 +109,25 @@ class RecorderViewModel: ObservableObject {
 
     // MARK: - Public Methods
 
-    /// Check permission status
+    /// Check permission status.
+    ///
+    /// Single-flighted: `didBecomeActiveNotification` and the permission guide's
+    /// poll loop can both ask at once, and `SCShareableContent` is an XPC round-trip
+    /// whose latency varies. Without this, two probes overlap and the *slower* one
+    /// writes last — so a stale `.denied` can land after a fresh `.granted` and the
+    /// UI insists permission is missing seconds after the user granted it. That is
+    /// precisely the failure the guide exists to prevent, so it must not be
+    /// reintroduced by the guide's own polling.
     func checkPermission() async {
-        permissionStatus = await permissions.checkPermission()
+        if let inFlight = permissionProbe {
+            _ = await inFlight.value
+            return
+        }
+        let probe = Task { await permissions.checkPermission() }
+        permissionProbe = probe
+        let status = await probe.value
+        permissionProbe = nil
+        permissionStatus = status
     }
 
     /// Request permission
@@ -210,9 +232,37 @@ class RecorderViewModel: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
-    /// Open System Settings
+    /// Open System Settings *and* leave a guide on screen (BL-081).
+    ///
+    /// Opening the pane alone is where this flow used to end, and it abandoned the
+    /// user at the hardest moment: macOS offers no way to scroll to or highlight an
+    /// app's row, the system prompt never fires twice, and Home Rec's own copy
+    /// ("only captures audio") points people at the one section it isn't listed in.
+    /// The panel outlives the focus change and says where to look; the poll loop
+    /// notices the grant without the user having to come back and check.
     func openSystemSettings() {
+        showPermissionGuide()
         permissions.openSystemPreferences()
+    }
+
+    /// Whether the guide panel is currently on screen.
+    var permissionGuideIsVisible: Bool { guidePanel?.isVisible ?? false }
+
+    /// Show the guide panel, creating it on first use.
+    func showPermissionGuide() {
+        if guidePanel == nil {
+            let model = PermissionGuideModel(permissions: permissions)
+            model.onGranted = { [weak self] in
+                // Mirror the grant into the app's own state so every surface
+                // updates, not just the panel.
+                Task { @MainActor in await self?.checkPermission() }
+            }
+            guidePanel = PermissionGuidePanel(model: model) { [weak self] in
+                guard let self else { return }
+                self.permissions.openSystemPreferences()
+            }
+        }
+        guidePanel?.show()
     }
 
     /// Present the folder chooser; persist the picked directory.

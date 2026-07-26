@@ -91,3 +91,4 @@ notariz*.txt
 *appcast*.key
 .vercel
 .env*
+*.profraw

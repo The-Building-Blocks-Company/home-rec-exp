@@ -36,7 +36,13 @@ struct RecorderView: View {
                     .animation(.easeOut(duration: 0.1), value: viewModel.waveformSamples)
             }
 
-            // Permission guidance (inline, above button)
+            // Permission guidance (inline, above button).
+            //
+            // The trust line and the navigation line do different jobs and must not
+            // be collapsed: "only captures audio" is true and worth saying, but on
+            // its own it sends people to the "System Audio Recording Only" list,
+            // where Home Rec isn't. The hint names the section that actually holds
+            // it. See PermissionKind.navigationHint.
             if viewModel.permissionStatus != .granted {
                 VStack(spacing: 6) {
                     Text("Grant Screen Recording permission to get started.")
@@ -44,10 +50,11 @@ struct RecorderView: View {
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
 
-                    Text("Home Rec only captures audio — not your screen.")
+                    Text(PermissionKind.screenCapture.navigationHint)
                         .font(.custom("Inter-Regular", size: 11, relativeTo: .caption))
                         .foregroundColor(.secondary.opacity(0.7))
                         .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 

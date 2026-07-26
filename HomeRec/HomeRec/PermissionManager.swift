@@ -2,7 +2,8 @@
 //  PermissionManager.swift
 //  HomeRec
 //
-//  Handles Screen Recording permission required for Core Audio Taps API
+//  Screen Recording permission: probing current state and opening the pane where
+//  the user grants it.
 //
 
 import Foundation
@@ -16,50 +17,48 @@ enum PermissionStatus {
     case denied
 }
 
-/// Manages Screen Recording permission (required for Core Audio Taps)
+/// Manages the system permissions Home Rec depends on.
 class PermissionManager: PermissionProviding {
 
-    /// Check current Screen Recording permission status using SCShareableContent.
-    /// This also registers the app in System Settings > Screen Recording.
-    /// - Returns: Current permission status
-    func checkPermission() async -> PermissionStatus {
-        do {
-            // Probing SCShareableContent registers the app in the Screen Recording list
-            // and succeeds only if permission is already granted.
-            _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            return .granted
-        } catch {
-            return .denied
+    /// Probe current permission state.
+    ///
+    /// For `.screenCapture` this doubles as registration: a `SCShareableContent`
+    /// call is what puts Home Rec into the System Settings list in the first
+    /// place, and on a fresh install it triggers the one-time system prompt.
+    func checkPermission(_ kind: PermissionKind = .screenCapture) async -> PermissionStatus {
+        switch kind {
+        case .screenCapture:
+            do {
+                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                return .granted
+            } catch {
+                return .denied
+            }
         }
     }
 
-    /// Request Screen Recording permission.
-    /// Probes SCShareableContent to register the app, then opens System Settings
-    /// so the user can flip the toggle (the app will now appear in the list).
-    /// - Returns: True if permission is already granted, false otherwise
-    func requestPermission() async -> Bool {
-        let status = await checkPermission()
-        if status == .granted {
+    /// Probe, and if not granted, open the pane where the user can flip the toggle.
+    ///
+    /// The system prompt only ever appears once; after a deny or a dismiss there is
+    /// no second chance at it, which is why the in-app guide (BL-081) is the real
+    /// recovery path rather than a nicety.
+    func requestPermission(_ kind: PermissionKind = .screenCapture) async -> Bool {
+        if await checkPermission(kind) == .granted {
             return true
         }
-        // The probe above registered the app; now open Settings so the user can enable it
-        openSystemPreferences()
+        openSystemPreferences(for: kind)
         return false
     }
 
-    /// Open System Settings to Screen Recording privacy pane
-    func openSystemPreferences() {
-        // Open System Settings to Privacy & Security > Screen Recording
-        if #available(macOS 13.0, *) {
-            // macOS Ventura and later
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                NSWorkspace.shared.open(url)
-            }
-        } else {
-            // Fallback for older versions
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security") {
-                NSWorkspace.shared.open(url)
-            }
+    /// Open System Settings at the pane for `kind`.
+    ///
+    /// Deep-linking to the pane is the most macOS allows — there is no API to
+    /// scroll to or highlight our row, which is why the guide has to describe
+    /// where to look instead.
+    func openSystemPreferences(for kind: PermissionKind = .screenCapture) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(kind.settingsAnchor)") else {
+            return
         }
+        NSWorkspace.shared.open(url)
     }
 }

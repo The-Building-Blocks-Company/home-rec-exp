@@ -33,6 +33,10 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Home Rec needs Screen Recording permission to capture audio.", systemImage: "lock.shield")
                 Label("It only captures audio — never your screen.", systemImage: "eye.slash")
+                // Where to actually find it. Without this the line above sends
+                // people to the audio-only list, which doesn't contain Home Rec.
+                Label(PermissionKind.screenCapture.navigationHint, systemImage: "list.bullet")
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
             .foregroundColor(.secondary)

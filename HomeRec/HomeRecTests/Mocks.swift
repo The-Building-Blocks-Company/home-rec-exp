@@ -79,14 +79,51 @@ final class MockAudioFileWriting: AudioFileWriting {
 final class MockPermissionProviding: PermissionProviding {
     var status: PermissionStatus
     private(set) var openSettingsCount = 0
+    /// Probes received, so tests can assert a poll loop actually stopped —
+    /// a leaked loop is invisible from published state alone.
+    private(set) var checkCount = 0
+    /// Kinds the caller asked about, in order.
+    private(set) var requestedKinds: [PermissionKind] = []
+    /// Suspends `checkPermission` until `resumePendingChecks()` is called, so a
+    /// test can hold one probe mid-flight and start a second — the shape of the
+    /// overlapping-probe race.
+    var holdsChecks = false
+    private var pending: [CheckedContinuation<Void, Never>] = []
 
     init(_ status: PermissionStatus = .granted) {
         self.status = status
     }
 
-    func checkPermission() async -> PermissionStatus { status }
-    func requestPermission() async -> Bool { status == .granted }
-    func openSystemPreferences() { openSettingsCount += 1 }
+    func checkPermission(_ kind: PermissionKind = .screenCapture) async -> PermissionStatus {
+        checkCount += 1
+        requestedKinds.append(kind)
+        if holdsChecks {
+            await withCheckedContinuation { pending.append($0) }
+        }
+        return status
+    }
+
+    func requestPermission(_ kind: PermissionKind = .screenCapture) async -> Bool { status == .granted }
+    func openSystemPreferences(for kind: PermissionKind = .screenCapture) { openSettingsCount += 1 }
+
+    /// Release every held probe.
+    func resumePendingChecks() {
+        let held = pending
+        pending = []
+        held.forEach { $0.resume() }
+    }
+}
+
+/// Poll clock whose waits return immediately, so a poll loop runs at full speed
+/// under test and the suite never sleeps.
+@MainActor
+final class ImmediatePollClock: PollClock {
+    private(set) var sleepCount = 0
+    func sleep(for interval: TimeInterval) async throws {
+        sleepCount += 1
+        try Task.checkCancellation()
+        await Task.yield()
+    }
 }
 
 @MainActor
