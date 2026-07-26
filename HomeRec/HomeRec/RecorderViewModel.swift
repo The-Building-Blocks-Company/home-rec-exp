@@ -87,8 +87,22 @@ class RecorderViewModel: ObservableObject {
     private var recordingStartTime: Date?
     private var longRecordingWarned = false
     private var activationObserver: NSObjectProtocol?
-    /// Whether the launch activation has already been observed and swallowed.
-    private var hasSeenLaunchActivation = false
+    /// Whether the user has done something that asks for permission.
+    ///
+    /// The activation re-probe exists for exactly one scenario — the user granted
+    /// in System Settings and came back (BL-040) — so it fires only once they have
+    /// been sent there. Counting activations instead ("skip the first, it must be
+    /// launch") makes correctness depend on whether SwiftUI built this object
+    /// before or after the launch activation, which is not contracted: on a
+    /// background launch (`open -g`, a login item) or late scene evaluation the
+    /// swallowed activation is a real return, and the grant goes unnoticed.
+    ///
+    /// Gating on resignation instead was considered and rejected: it re-probes any
+    /// ungranted return, so launch → switch to another app → switch back prompts
+    /// with no click behind it, which is the whole bug class (BL-085). What intent
+    /// gives up is noticing a *spontaneous* grant — a near-empty set, since an app
+    /// that has never probed is not listed in System Settings to be granted.
+    private var hasSoughtPermission = false
     /// In-flight permission probe, so overlapping callers share one result
     /// rather than racing to write `permissionStatus`. See `checkPermission()`.
     private var permissionProbe: Task<PermissionStatus, Never>?
@@ -165,15 +179,11 @@ class RecorderViewModel: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                // The first didBecomeActive is launch itself, not the user
-                // returning from anywhere — probing there raises the system prompt
-                // on a fresh install with zero clicks, the exact BL-085 violation.
-                // BL-040's scenario (grant in Settings, come back) is always a
-                // *later* activation, so skipping the first loses nothing.
-                if !self.hasSeenLaunchActivation {
-                    self.hasSeenLaunchActivation = true
-                    return
-                }
+                // Only re-probe once the user has actually gone looking for the
+                // permission. Launch, and any idle activation before then, stays
+                // silent — the app wanting to know its own state is never a reason
+                // to raise a system dialog (BL-085).
+                guard self.hasSoughtPermission else { return }
                 guard self.permissionStatus != .granted else { return }
                 // A translocated bundle must never be walked into the permission
                 // flow (BL-082a): the authoritative probe raises the system prompt,
@@ -245,6 +255,7 @@ class RecorderViewModel: ObservableObject {
 
     /// Request permission
     func requestPermission() async {
+        hasSoughtPermission = true
         let granted = await permissions.requestPermission()
         permissionStatus = granted ? .granted : .denied
 
@@ -464,6 +475,7 @@ class RecorderViewModel: ObservableObject {
 
     /// Show the guide panel, creating it on first use.
     func showPermissionGuide() {
+        hasSoughtPermission = true
         if guidePanel == nil {
             let model = PermissionGuideModel(permissions: permissions)
             model.onGranted = { [weak self] in

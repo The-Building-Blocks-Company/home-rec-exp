@@ -97,20 +97,24 @@ struct PermissionProbeTests {
         for _ in 0..<50 { await Task.yield() }
     }
 
-    /// The launch-activation guard. `didBecomeActive` fires on launch itself, not
-    /// only on returns from elsewhere — and before this guard existed, a fresh
-    /// ungranted install got the system prompt at launch with zero clicks, found
-    /// live during the v1.0.1 manual pass. The first activation must be swallowed.
-    @Test("The launch activation never probes, even when ungranted")
-    func launchActivationDoesNotProbe() async {
+    /// `didBecomeActive` fires on launch too, and before this guard a fresh
+    /// ungranted install got the system prompt at launch with zero clicks — found
+    /// live during the v1.0.1 manual pass. The gate is *intent*: no probe until the
+    /// user has gone looking for the permission, however many times the app is
+    /// activated first.
+    @Test("Activations never probe until the user has sought the permission")
+    func activationDoesNotProbeBeforeIntent() async {
         let permissions = MockPermissionProviding(.denied)
         let viewModel = makeViewModel(permissions)
         for _ in 0..<50 { await Task.yield() }
 
-        await activate()   // launch — the app becoming active for the first time
+        // Launch, then a switch away and back, then another. None is a request.
+        await activate()
+        await activate()
+        await activate()
 
         #expect(permissions.checkCount == 0,
-                "The first activation is launch itself; probing there prompts with zero clicks")
+                "No probe may run before the user asks — this is the zero-click prompt")
         // Non-vacuity: the launch path did run and did read state — silently.
         #expect(permissions.preflightCount == 1)
         #expect(viewModel.permissionStatus == .denied)
@@ -123,27 +127,31 @@ struct PermissionProbeTests {
         for _ in 0..<50 { await Task.yield() }
         let baseline = permissions.checkCount
 
-        await activate()   // launch
-        await activate()   // a real return to the app
+        // Intent is set, so the *only* thing still holding the observer back is
+        // the already-granted guard: drop that guard and these activations probe.
+        await viewModel.requestPermission()
+
+        await activate()
+        await activate()
 
         #expect(viewModel.permissionStatus == .granted)
         #expect(permissions.checkCount == baseline, "Already granted — nothing to ask")
     }
 
-    /// BL-040 regression guard. Skipping the probe when granted, and swallowing
-    /// the launch activation, must not become skipping the one probe that can
-    /// notice a grant made while the app was running.
-    @Test("A later activation still re-detects a grant made while the app was running")
-    func activationReprobesWhenNotGranted() async {
+    /// BL-040 regression guard, and the reason the gate is intent rather than
+    /// ordinality: once the user *has* asked, coming back must re-detect the grant
+    /// — that is the entire scenario the observer exists for.
+    @Test("Returning after seeking permission re-detects a grant made meanwhile")
+    func activationReprobesAfterSeekingPermission() async {
         let permissions = MockPermissionProviding(.denied)
         let viewModel = makeViewModel(permissions)
         for _ in 0..<50 { await Task.yield() }
         #expect(viewModel.permissionStatus == .denied)
 
-        await activate()   // launch — swallowed
-        permissions.status = .granted
-        await activate()   // returning from System Settings
-        for _ in 0..<500 where viewModel.permissionStatus != .granted { await Task.yield() }
+        await viewModel.requestPermission()   // sent to System Settings
+        permissions.status = .granted        // granted while away
+        await activate()                     // and back
+        for _ in 0..<2000 where viewModel.permissionStatus != .granted { await Task.yield() }
 
         #expect(viewModel.permissionStatus == .granted)
         #expect(permissions.checkCount >= 1)
