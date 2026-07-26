@@ -59,6 +59,9 @@ docs/product-strategy/
 home-rec-website.html
 privacy.html
 terms.html
+favicon.svg
+favicon.ico
+apple-touch-icon.png
 
 # Vercel deploy config — describes how the website is deployed, not how the
 # app is built. Kept local alongside the website HTML files.
@@ -82,3 +85,5 @@ AuthKey_*.p8
 secrets.*
 notariz*.txt
 *appcast*.key
+.vercel
+.env*
