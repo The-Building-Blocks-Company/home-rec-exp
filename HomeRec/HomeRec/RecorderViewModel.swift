@@ -54,6 +54,11 @@ class RecorderViewModel: ObservableObject {
     /// Whether a recording is actively capturing. Derived from `state`.
     var isRecording: Bool { state == .recording }
 
+    /// Whether the app is actually in a position to record: permission granted and
+    /// the bundle in a location where that grant will survive. The record button is
+    /// live only in this state; otherwise it carries a corrective action instead.
+    var canRecord: Bool { permissionStatus == .granted && !installLocation.blocksRecording }
+
     /// Recording is refused outright only for a translocated bundle: the grant it
     /// needs cannot survive, so "it worked once and then stopped" is the *best*
     /// case if we let it through. Merely living outside `/Applications` never
@@ -142,6 +147,11 @@ class RecorderViewModel: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.permissionStatus != .granted else { return }
+                // A translocated bundle must never be walked into the permission
+                // flow (BL-082a): the authoritative probe raises the system prompt,
+                // and any grant it wins evaporates on next launch. The block panel
+                // is the only correct response, and it is already up.
+                guard !self.installLocation.blocksRecording else { return }
                 await self.checkPermission()
             }
         }
@@ -543,6 +553,9 @@ class RecorderViewModel: ObservableObject {
         case .error:
             return "Something went wrong"
         case .idle:
+            // A translocated bundle can't hold a permission grant, so "Almost
+            // ready / grant permission" would be a lie — point at the real fix.
+            if installLocation.blocksRecording { return "Move to Applications" }
             return permissionStatus != .granted ? "Almost ready" : "Play something, then hit record"
         }
     }

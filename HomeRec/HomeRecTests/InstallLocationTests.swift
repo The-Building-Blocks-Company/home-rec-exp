@@ -15,6 +15,7 @@
 
 import Testing
 import Foundation
+import AppKit
 @testable import HomeRec
 
 @MainActor
@@ -175,6 +176,34 @@ struct InstallLocationTests {
         #expect(noticeCount == baseline + 1)
         #expect(permissions.openSettingsCount == 0)
         #expect(viewModel.permissionGuideIsVisible == false)
+    }
+
+    /// Regression guard for a defect found in manual testing of v1.0.1: the
+    /// translocation block correctly showed its panel, but the activation observer
+    /// still fired the authoritative permission probe — which raises the system
+    /// prompt — because permission on a translocated bundle is never `.granted`, so
+    /// the BL-085 "skip when granted" guard never tripped. A translocated user was
+    /// shown the block *and* pushed into the permission flow at once, the exact harm
+    /// BL-082a exists to prevent.
+    @Test("Activation never probes permission on a translocated bundle")
+    func translocationSuppressesActivationProbe() async {
+        let permissions = MockPermissionProviding(.denied)
+        let viewModel = RecorderViewModel(
+            controller: MockRecordingControlling(),
+            permissions: permissions,
+            clock: ManualClock(),
+            installLocation: MockInstallLocationProviding(.translocated),
+            installNoticePresenter: {}
+        )
+        for _ in 0..<50 { await Task.yield() }
+        let baseline = permissions.checkCount
+
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        for _ in 0..<50 { await Task.yield() }
+
+        #expect(permissions.checkCount == baseline,
+                "A translocated bundle must not run the prompting probe on activation")
+        #expect(viewModel.canRecord == false)
     }
 
     @Test("Dismissing the hard block does not make it go away")

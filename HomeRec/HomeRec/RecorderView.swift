@@ -11,6 +11,14 @@ struct RecorderView: View {
 
     @EnvironmentObject var viewModel: RecorderViewModel
 
+    /// Label for the primary button, which carries whichever action stands between
+    /// the user and recording: move the app, grant permission, or record/stop.
+    private var mainButtonTitle: String {
+        if viewModel.installLocationBlocksRecording { return "Reveal in Finder" }
+        if viewModel.permissionStatus != .granted { return "Open System Settings" }
+        return viewModel.isRecording ? "Stop recording" : "Start recording"
+    }
+
     var body: some View {
         VStack(spacing: 24) {
             // App Logo + Status grouped closer together
@@ -67,7 +75,17 @@ struct RecorderView: View {
             // its own it sends people to the "System Audio Recording Only" list,
             // where Home Rec isn't. The hint names the section that actually holds
             // it. See PermissionKind.navigationHint.
-            if viewModel.permissionStatus != .granted {
+            // A translocated bundle can't hold a permission grant, so the permission
+            // guidance below would send the user down a path that silently fails
+            // (BL-082a). Show the move instruction instead; the floating block panel
+            // carries the full explanation.
+            if viewModel.installLocationBlocksRecording {
+                Text("Home Rec can't record from the disk image. Move it to your Applications folder, then open it from there.")
+                    .font(.custom("Inter-Regular", size: 13, relativeTo: .body))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if viewModel.permissionStatus != .granted {
                 VStack(spacing: 6) {
                     Text("Grant Screen Recording permission to get started.")
                         .font(.custom("Inter-Regular", size: 13, relativeTo: .body))
@@ -86,7 +104,9 @@ struct RecorderView: View {
             VStack(spacing: 16) {
                 // Main Control Button
                 Button(action: {
-                    if viewModel.permissionStatus != .granted {
+                    if viewModel.installLocationBlocksRecording {
+                        viewModel.revealAppInFinder()
+                    } else if viewModel.permissionStatus != .granted {
                         viewModel.openSystemSettings()
                     } else {
                         Task {
@@ -95,17 +115,17 @@ struct RecorderView: View {
                     }
                 }) {
                     HStack {
-                        if viewModel.permissionStatus == .granted {
+                        if viewModel.canRecord {
                             Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
                                 .font(.system(size: 24))
                         }
-                        Text(viewModel.permissionStatus != .granted ? "Open System Settings" : (viewModel.isRecording ? "Stop recording" : "Start recording"))
+                        Text(mainButtonTitle)
                             .font(.custom("Archivo", size: 15, relativeTo: .body))
                             .fontWeight(.medium)
                     }
                     .frame(width: 220, height: 50)
                     .foregroundColor(.white)
-                    .background(viewModel.permissionStatus != .granted ? Color.gray.opacity(0.3) : Color.red)
+                    .background(viewModel.canRecord ? Color.red : Color.gray.opacity(0.3))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
