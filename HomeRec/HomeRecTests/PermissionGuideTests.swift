@@ -90,7 +90,7 @@ struct PermissionGuideTests {
         let model = makeModel(permissions)
 
         model.startPolling()
-        while model.state != .granted { await Task.yield() }
+        for _ in 0..<2000 where model.state != .granted { await Task.yield() }
 
         let settled = permissions.checkCount
         for _ in 0..<50 { await Task.yield() }
@@ -103,7 +103,7 @@ struct PermissionGuideTests {
         let model = makeModel(permissions)
 
         model.startPolling()
-        while permissions.checkCount < 3 { await Task.yield() }
+        for _ in 0..<2000 where permissions.checkCount < 3 { await Task.yield() }
         model.stopPolling()
 
         // Let the cancellation land, then confirm probing has actually ceased.
@@ -120,7 +120,7 @@ struct PermissionGuideTests {
 
         model.startPolling()
         model.startPolling()
-        while permissions.checkCount < 5 { await Task.yield() }
+        for _ in 0..<2000 where permissions.checkCount < 5 { await Task.yield() }
         model.stopPolling()
         for _ in 0..<20 { await Task.yield() }
 
@@ -137,7 +137,7 @@ struct PermissionGuideTests {
         do {
             let model = makeModel(permissions)
             model.startPolling()
-            while permissions.checkCount < 2 { await Task.yield() }
+            for _ in 0..<2000 where permissions.checkCount < 2 { await Task.yield() }
         }
         for _ in 0..<20 { await Task.yield() }
         let settled = permissions.checkCount
@@ -161,7 +161,7 @@ struct PermissionGuideTests {
         )
 
         model.startPolling()
-        while model.state != .timedOut { await Task.yield() }
+        for _ in 0..<2000 where model.state != .timedOut { await Task.yield() }
 
         #expect(permissions.checkCount == 5)
         for _ in 0..<50 { await Task.yield() }
@@ -179,11 +179,11 @@ struct PermissionGuideTests {
         )
 
         model.startPolling()
-        while model.state != .timedOut { await Task.yield() }
+        for _ in 0..<2000 where model.state != .timedOut { await Task.yield() }
 
         permissions.status = .granted
         model.resumePolling()
-        while model.state != .granted { await Task.yield() }
+        for _ in 0..<2000 where model.state != .granted { await Task.yield() }
         #expect(model.state == .granted)
     }
 
@@ -214,12 +214,13 @@ struct PermissionGuideTests {
         let viewModel = RecorderViewModel(
             controller: MockRecordingControlling(),
             permissions: permissions,
-            clock: ManualClock()
+            clock: ManualClock(),
+            notificationCenter: NotificationCenter()
         )
 
         // First probe is in flight and suspended, holding `.denied`.
         let first = Task { await viewModel.checkPermission() }
-        while permissions.checkCount < 1 { await Task.yield() }
+        for _ in 0..<2000 where permissions.checkCount < 1 { await Task.yield() }
 
         // Permission is granted, and a second caller asks — the situation the
         // activation observer and the poll loop create between them.
@@ -242,22 +243,28 @@ struct PermissionGuideTests {
         let viewModel = RecorderViewModel(
             controller: MockRecordingControlling(),
             permissions: permissions,
-            clock: ManualClock()
+            clock: ManualClock(),
+            notificationCenter: NotificationCenter()
         )
-        // The view model probes once during init; wait for that to be in flight.
-        while permissions.checkCount < 1 { await Task.yield() }
-        let baseline = permissions.checkCount
+        // Launch no longer probes at all — it reads state silently (BL-085) — so
+        // there is no in-flight probe to piggyback on and the count starts at zero.
+        // (This test used to wait for an init probe that no longer happens; it kept
+        // passing only because a *real* app activation reached the shared
+        // NotificationCenter mid-suite and fired one. With the center injected,
+        // that accident is gone and the assertion has to stand on its own.)
+        #expect(permissions.checkCount == 0)
 
         let a = Task { await viewModel.checkPermission() }
         let b = Task { await viewModel.checkPermission() }
-        for _ in 0..<10 { await Task.yield() }
+        for _ in 0..<50 { await Task.yield() }
 
         permissions.holdsChecks = false
         permissions.resumePendingChecks()
         _ = await a.value
         _ = await b.value
 
-        // Both callers joined the probe already in flight; neither started a new one.
-        #expect(permissions.checkCount == baseline)
+        // Two callers, one probe: the second joined the first rather than issuing
+        // its own. Without the single-flight this would be 2.
+        #expect(permissions.checkCount == 1)
     }
 }

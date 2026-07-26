@@ -106,9 +106,13 @@ enum InstallLocation: Equatable, Sendable {
     var explanation: String? {
         switch self {
         case .translocated:
-            return "Home Rec is running from the disk image. Quit, drag Home Rec to your "
-                 + "Applications folder, and open it from there — otherwise macOS won't "
-                 + "remember this permission."
+            // The one canonical sentence for this state — every surface (main
+            // window, floating panel, menu-bar popover) shows it verbatim, so the
+            // user reads one fact however they meet the block. "Quit" leads
+            // because it is a load-bearing step, not decoration: the running copy
+            // is the one that must die for the fix to take.
+            return "Home Rec can't record from the disk image. Quit, drag it to "
+                 + "your Applications folder, and open it from there."
         case .elsewhere:
             return "Home Rec isn't in your Applications folder. It'll still record — this "
                  + "is just where it lives."

@@ -112,6 +112,9 @@ struct InstallLocationTests {
         let text = InstallLocation.translocated.explanation
         #expect(text?.contains("disk image") == true)
         #expect(text?.contains("Applications folder") == true)
+        // "Quit" is load-bearing: the running copy is the one that must die for
+        // the fix to take, and a user who only drags will be baffled.
+        #expect(text?.contains("Quit") == true)
         #expect(InstallLocation.translocated.noticeIsDismissible == false)
     }
 
@@ -126,6 +129,9 @@ struct InstallLocationTests {
 
     /// The presenter override keeps these tests off AppKit: the production path
     /// would order a real panel on screen, which a unit test must not do.
+    /// Per-suite center — see the note in PermissionProbeTests.
+    private let center = NotificationCenter()
+
     private func makeViewModel(
         _ location: InstallLocation,
         controller: MockRecordingControlling? = nil,
@@ -136,7 +142,8 @@ struct InstallLocationTests {
             permissions: MockPermissionProviding(.granted),
             clock: ManualClock(),
             installLocation: MockInstallLocationProviding(location),
-            installNoticePresenter: onNotice
+            installNoticePresenter: onNotice,
+            notificationCenter: center
         )
     }
 
@@ -166,7 +173,8 @@ struct InstallLocationTests {
             permissions: permissions,
             clock: ManualClock(),
             installLocation: MockInstallLocationProviding(.translocated),
-            installNoticePresenter: { noticeCount += 1 }
+            installNoticePresenter: { noticeCount += 1 },
+            notificationCenter: center
         )
         // The launch-time notice already fired once; measure from there.
         let baseline = noticeCount
@@ -193,17 +201,96 @@ struct InstallLocationTests {
             permissions: permissions,
             clock: ManualClock(),
             installLocation: MockInstallLocationProviding(.translocated),
-            installNoticePresenter: {}
+            installNoticePresenter: {},
+            notificationCenter: center
         )
         for _ in 0..<50 { await Task.yield() }
         let baseline = permissions.checkCount
 
-        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
-        for _ in 0..<50 { await Task.yield() }
+        // Two activations: the first is launch (swallowed for everyone); the
+        // second is the one that would probe — and must not, when translocated.
+        for _ in 0..<2 {
+            center.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+            for _ in 0..<50 { await Task.yield() }
+        }
 
         #expect(permissions.checkCount == baseline,
-                "A translocated bundle must not run the prompting probe on activation")
+                "A translocated bundle must not run the prompting probe on any activation")
         #expect(viewModel.canRecord == false)
+    }
+
+    /// The panel is a fallback for when no window can carry the block — found in
+    /// the v1.0.1 manual pass stating the same fact twice: main window and panel,
+    /// side by side, which reads as two faults. With a window on screen the panel
+    /// must stand down; the window is the canonical surface.
+    ///
+    /// Both directions are asserted through the presenter seam, which counts
+    /// presentations without materialising an `NSPanel` mid-suite.
+    @Test("The floating panel yields to a visible main window")
+    func panelYieldsToVisibleWindow() async {
+        var presentations = 0
+        let viewModel = makeViewModel(.translocated, onNotice: { presentations += 1 })
+
+        viewModel.mainWindowDidAppear()
+        presentations = 0          // measure from the window being up
+
+        viewModel.showInstallLocationNotice()
+
+        // The block state is still surfaced — the window renders it. Only the
+        // duplicate panel is suppressed.
+        #expect(viewModel.showsInstallLocationNotice)
+        #expect(presentations == 0)
+    }
+
+    /// The panel's one remaining job. Without it, a translocated relaunch that
+    /// opens no window is a silently dead app: nothing records, nothing explains.
+    @Test("The floating panel presents when no window can carry the block")
+    func panelPresentsWithoutAWindow() async {
+        var presentations = 0
+        let viewModel = makeViewModel(.translocated, onNotice: { presentations += 1 })
+        #expect(viewModel.visibleWindowCount == 0)
+        presentations = 0
+
+        viewModel.showInstallLocationNotice()
+
+        #expect(presentations == 1)
+    }
+
+    /// Closing the last window hands the block back to the panel.
+    @Test("Losing the last window re-presents the panel while blocked")
+    func lastWindowClosingRePresentsPanel() async {
+        var presentations = 0
+        let viewModel = makeViewModel(.translocated, onNotice: { presentations += 1 })
+        viewModel.mainWindowDidAppear()
+        presentations = 0
+
+        viewModel.mainWindowDidDisappear()
+
+        #expect(viewModel.visibleWindowCount == 0)
+        #expect(presentations == 1)
+    }
+
+    /// The same, for a bundle that is merely elsewhere: no window, no block, and
+    /// therefore nothing to re-present. Only the hard block earns the fallback.
+    @Test("Losing the last window does not present anything when not blocked")
+    func lastWindowClosingIsQuietWhenNotBlocked() async {
+        var presentations = 0
+        let viewModel = makeViewModel(.applications, onNotice: { presentations += 1 })
+        viewModel.mainWindowDidAppear()
+        presentations = 0
+
+        viewModel.mainWindowDidDisappear()
+
+        #expect(presentations == 0)
+    }
+
+    /// BL-086 acceptance: every surface renders the one canonical string. The
+    /// views read `installNotice`, so pinning it to `InstallLocation.explanation`
+    /// is what stops a second hardcoded copy drifting in.
+    @Test("The block message is the canonical string, not a copy")
+    func blockMessageIsCanonical() {
+        let viewModel = makeViewModel(.translocated)
+        #expect(viewModel.installNotice == InstallLocation.translocated.explanation)
     }
 
     @Test("Dismissing the hard block does not make it go away")

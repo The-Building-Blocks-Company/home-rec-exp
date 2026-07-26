@@ -87,6 +87,8 @@ class RecorderViewModel: ObservableObject {
     private var recordingStartTime: Date?
     private var longRecordingWarned = false
     private var activationObserver: NSObjectProtocol?
+    /// Whether the launch activation has already been observed and swallowed.
+    private var hasSeenLaunchActivation = false
     /// In-flight permission probe, so overlapping callers share one result
     /// rather than racing to write `permissionStatus`. See `checkPermission()`.
     private var permissionProbe: Task<PermissionStatus, Never>?
@@ -102,6 +104,20 @@ class RecorderViewModel: ObservableObject {
     /// orders it on screen, which a unit test asserting "translocation blocks
     /// recording" has no business doing. Production never passes this.
     private let installNoticePresenter: (() -> Void)?
+    /// Visible main windows, reported by the windows themselves.
+    ///
+    /// Deliberately *not* inferred from `NSApp.windows`: at init no window exists
+    /// yet, and a menu-bar app owns a visible `NSStatusBarWindow` for the whole
+    /// process — so "any visible non-panel window" answers `false` exactly when a
+    /// window is about to appear, and `true` forever after even with every real
+    /// window closed. Both answers are wrong at the moment they matter.
+    private(set) var visibleWindowCount = 0
+    private var launchNoticeObserver: NSObjectProtocol?
+    /// Injected so tests get their own activation notifications. `.default` is
+    /// process-global, and the suites are unserialized: one suite's synthetic
+    /// `didBecomeActive` would otherwise reach every other suite's live view
+    /// model, which is both a false pass and a false failure waiting to happen.
+    private let notificationCenter: NotificationCenter
     private let defaults: UserDefaults
     private let onboardingCompletedKey = "hasCompletedOnboarding"
     private let selectedFormatKey = "selectedFormat"
@@ -115,8 +131,10 @@ class RecorderViewModel: ObservableObject {
         saveLocation: SaveLocationProviding? = nil,
         installLocation: InstallLocationProviding? = nil,
         defaults: UserDefaults = .standard,
-        installNoticePresenter: (() -> Void)? = nil
+        installNoticePresenter: (() -> Void)? = nil,
+        notificationCenter: NotificationCenter = .default
     ) {
+        self.notificationCenter = notificationCenter
         let resolvedInstallLocation = installLocation ?? BundleInstallLocation()
         self.installLocationProvider = resolvedInstallLocation
         self.installLocation = resolvedInstallLocation.location
@@ -140,17 +158,27 @@ class RecorderViewModel: ObservableObject {
         // already-set-up user. That probe is an XPC round-trip that can also raise
         // the system prompt, and re-asking a question already answered "yes" buys
         // nothing. A revocation mid-session surfaces when recording next starts.
-        activationObserver = NotificationCenter.default.addObserver(
+        activationObserver = notificationCenter.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.permissionStatus != .granted else { return }
+                guard let self else { return }
+                // The first didBecomeActive is launch itself, not the user
+                // returning from anywhere — probing there raises the system prompt
+                // on a fresh install with zero clicks, the exact BL-085 violation.
+                // BL-040's scenario (grant in Settings, come back) is always a
+                // *later* activation, so skipping the first loses nothing.
+                if !self.hasSeenLaunchActivation {
+                    self.hasSeenLaunchActivation = true
+                    return
+                }
+                guard self.permissionStatus != .granted else { return }
                 // A translocated bundle must never be walked into the permission
                 // flow (BL-082a): the authoritative probe raises the system prompt,
-                // and any grant it wins evaporates on next launch. The block panel
-                // is the only correct response, and it is already up.
+                // and any grant it wins evaporates on next launch. The block
+                // surfaces are the only correct response.
                 guard !self.installLocation.blocksRecording else { return }
                 await self.checkPermission()
             }
@@ -161,16 +189,34 @@ class RecorderViewModel: ObservableObject {
         // own state is not a good enough reason to interrupt. Preflight is accurate
         // at launch, which is exactly and only what is needed here.
         permissionStatus = self.permissions.preflight()
-        // A translocated bundle is broken from the first launch, so say so at
-        // launch rather than waiting for the user to hit a wall.
+        // A translocated bundle is broken from the first launch, so the block state
+        // is set now — but nothing is *presented* from here. At this point the view
+        // model is still being constructed as a `@StateObject`, so no window exists
+        // yet; presenting here would always take the no-window branch and put the
+        // panel up moments before the main window appears saying the same thing.
+        // The window announces itself via `mainWindowDidAppear()`; a launch that
+        // opens no window at all is covered by the fallback below.
         if self.installLocation.blocksRecording {
-            showInstallLocationNotice()
+            self.showsInstallLocationNotice = true
+            launchNoticeObserver = notificationCenter.addObserver(
+                forName: NSApplication.didFinishLaunchingNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.visibleWindowCount == 0 else { return }
+                    self.showInstallLocationNotice()
+                }
+            }
         }
     }
 
     deinit {
         if let activationObserver {
-            NotificationCenter.default.removeObserver(activationObserver)
+            notificationCenter.removeObserver(activationObserver)
+        }
+        if let launchNoticeObserver {
+            notificationCenter.removeObserver(launchNoticeObserver)
         }
     }
 
@@ -334,10 +380,46 @@ class RecorderViewModel: ObservableObject {
 
     // MARK: - Install location (BL-082)
 
-    /// Show the install-location explanation, creating its panel on first use.
+    /// A main window appeared and will render the block itself.
+    func mainWindowDidAppear() {
+        visibleWindowCount += 1
+        // The window is the canonical surface. Anything the panel was saying, it
+        // now says — and saying one fact twice at once reads as two faults.
+        installNoticePanel?.dismiss()
+    }
+
+    /// A main window went away. If that was the last one and the app is blocked,
+    /// nothing on screen carries the block any more — which for a menu-bar app
+    /// means a silently dead app. That is the panel's remaining job.
+    func mainWindowDidDisappear() {
+        visibleWindowCount = max(0, visibleWindowCount - 1)
+        if installLocation.blocksRecording && visibleWindowCount == 0 {
+            showInstallLocationNotice()
+        }
+    }
+
+    /// Show the install-location explanation.
+    ///
+    /// The floating panel is a **fallback, not the primary surface**: the main
+    /// window and the menu-bar popover both carry the block inline, so the panel
+    /// appears only when no window exists to say it — a translocated launch
+    /// running as a pure menu-bar presence, where silence would mean a dead app
+    /// with no explanation.
     func showInstallLocationNotice() {
         guard let message = installNotice else { return }
         showsInstallLocationNotice = true
+
+        // The window check comes first, ahead of the test seam, so the seam models
+        // *panel presentation* rather than "this method was called" — otherwise a
+        // test can't tell the suppressed case from the presented one.
+        if visibleWindowCount > 0 {
+            // A window is already showing this; `orderOut` deliberately leaves
+            // `showsInstallLocationNotice` true — the block state persists, only
+            // the duplicate surface goes away. (`orderOut` does not fire
+            // `windowWillClose`, so `onWillClose` won't clear it either.)
+            installNoticePanel?.dismiss()
+            return
+        }
 
         if let installNoticePresenter {
             installNoticePresenter()

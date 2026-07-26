@@ -45,8 +45,8 @@ struct RecorderView: View {
             }
 
             // Soft install-location note (BL-082): shown only for the dismissible
-            // tier. Translocation gets the floating panel instead — it is a block,
-            // not a note, and it has to stay readable while the user is in Finder.
+            // tier. The hard block takes over the window's content below instead —
+            // it is a block, not a note, and it replaces the permission flow.
             if viewModel.installLocation.noticeIsDismissible,
                let notice = viewModel.installNotice {
                 HStack(spacing: 8) {
@@ -77,10 +77,12 @@ struct RecorderView: View {
             // it. See PermissionKind.navigationHint.
             // A translocated bundle can't hold a permission grant, so the permission
             // guidance below would send the user down a path that silently fails
-            // (BL-082a). Show the move instruction instead; the floating block panel
-            // carries the full explanation.
-            if viewModel.installLocationBlocksRecording {
-                Text("Home Rec can't record from the disk image. Move it to your Applications folder, then open it from there.")
+            // (BL-082a). This window is the canonical surface for the block — the
+            // floating panel stands down while it is up (BL-086).
+            if viewModel.installLocationBlocksRecording, let message = viewModel.installNotice {
+                // Verbatim from InstallLocation.explanation — one sentence, one
+                // source, every surface (see the comment there).
+                Text(message)
                     .font(.custom("Inter-Regular", size: 13, relativeTo: .body))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -243,6 +245,12 @@ struct RecorderView: View {
         // and the view model's activation observer already re-probes when permission
         // is missing — so a probe here was redundant, and the authoritative one it
         // used to call can raise a system prompt merely because a window appeared.
+        //
+        // The window reports its own existence instead (BL-086): it is the canonical
+        // surface for the install-location block, so while it is up the floating
+        // panel must stand down, and when it goes away the panel is all that is left.
+        .onAppear { viewModel.mainWindowDidAppear() }
+        .onDisappear { viewModel.mainWindowDidDisappear() }
     }
 }
 

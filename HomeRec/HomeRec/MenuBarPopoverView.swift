@@ -73,28 +73,64 @@ struct MenuBarPopoverView: View {
                     .animation(.easeOut(duration: 0.1), value: viewModel.waveformSamples)
             }
 
-            // Record / Stop button
-            Button(action: {
-                Task {
-                    await viewModel.toggleRecording()
-                }
-            }) {
-                HStack {
-                    Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
-                    Text(viewModel.isRecording ? "Stop recording" : "Start recording")
+            // Primary action. A red "Start recording" on an app that cannot record
+            // is a false affordance, so when the bundle is translocated (BL-082a)
+            // the button carries the corrective action instead — and the popover
+            // explains the block itself rather than spawning the floating panel
+            // out of a transient surface (BL-086).
+            //
+            // The status row above and this explanation are title and body, not a
+            // duplication: the row compresses the action, this states the fact and
+            // the procedure. Accent fill rather than grey — grey is the system's
+            // *disabled* costume, and this is the only thing on the surface the
+            // user can do. Red is unavailable; it means "record" in this app.
+            if viewModel.installLocationBlocksRecording, let message = viewModel.installNotice {
+                Text(message)
+                    .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button(action: {
+                    viewModel.revealAppInFinder()
+                }) {
+                    Text("Reveal in Finder")
                         .font(.custom("Archivo", size: 13, relativeTo: .body))
                         .fontWeight(.medium)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .foregroundColor(.white)
+                        .background(Color.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .foregroundColor(.white)
-                .background(Color.red)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .buttonStyle(.plain)
+            } else {
+                Button(action: {
+                    Task {
+                        await viewModel.toggleRecording()
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
+                        Text(viewModel.isRecording ? "Stop recording" : "Start recording")
+                            .font(.custom("Archivo", size: 13, relativeTo: .body))
+                            .fontWeight(.medium)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .foregroundColor(.white)
+                    .background(Color.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
-            // Last recording info
-            if let url = viewModel.lastRecordingURL, !viewModel.isRecording {
+            // Last recording info. Hidden while blocked: its "Reveal" targets the
+            // recording, and the block's "Reveal in Finder" targets the app bundle
+            // — two near-identical affordances with different targets, 40pt apart
+            // on a 280pt surface. The file stays where it is; only the row waits.
+            if let url = viewModel.lastRecordingURL,
+               !viewModel.isRecording,
+               !viewModel.installLocationBlocksRecording {
                 HStack {
                     Image(systemName: "doc.fill")
                         .foregroundColor(.secondary)

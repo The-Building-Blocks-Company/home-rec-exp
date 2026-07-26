@@ -19,11 +19,18 @@ import AppKit
 @MainActor
 struct PermissionProbeTests {
 
+    /// Each test gets its own notification center. `.default` is process-global
+    /// and the suites run unserialized, so a synthetic `didBecomeActive` posted by
+    /// one suite reaches every other suite's live view model — which silently
+    /// consumes activations these tests are counting.
+    private let center = NotificationCenter()
+
     private func makeViewModel(_ permissions: MockPermissionProviding) -> RecorderViewModel {
         RecorderViewModel(
             controller: MockRecordingControlling(),
             permissions: permissions,
-            clock: ManualClock()
+            clock: ManualClock(),
+            notificationCenter: center
         )
     }
 
@@ -72,17 +79,42 @@ struct PermissionProbeTests {
         )
 
         model.startPolling()
-        while permissions.checkCount < 3 { await Task.yield() }
+        for _ in 0..<2000 where permissions.checkCount < 3 { await Task.yield() }
 
         // The system grants; preflight stays stale forever.
         permissions.status = .granted
-        while model.state != .granted { await Task.yield() }
+        for _ in 0..<2000 where model.state != .granted { await Task.yield() }
 
         #expect(model.state == .granted, "A latched preflight would never reach this")
         #expect(permissions.preflightCount == 0, "The loop must not use the silent API")
     }
 
     // MARK: - Activation re-probe
+
+    /// Fires `didBecomeActiveNotification` and lets the observer's task settle.
+    private func activate() async {
+        center.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        for _ in 0..<50 { await Task.yield() }
+    }
+
+    /// The launch-activation guard. `didBecomeActive` fires on launch itself, not
+    /// only on returns from elsewhere — and before this guard existed, a fresh
+    /// ungranted install got the system prompt at launch with zero clicks, found
+    /// live during the v1.0.1 manual pass. The first activation must be swallowed.
+    @Test("The launch activation never probes, even when ungranted")
+    func launchActivationDoesNotProbe() async {
+        let permissions = MockPermissionProviding(.denied)
+        let viewModel = makeViewModel(permissions)
+        for _ in 0..<50 { await Task.yield() }
+
+        await activate()   // launch — the app becoming active for the first time
+
+        #expect(permissions.checkCount == 0,
+                "The first activation is launch itself; probing there prompts with zero clicks")
+        // Non-vacuity: the launch path did run and did read state — silently.
+        #expect(permissions.preflightCount == 1)
+        #expect(viewModel.permissionStatus == .denied)
+    }
 
     @Test("Activation does not re-probe when permission is already granted")
     func activationSkipsProbeWhenGranted() async {
@@ -91,25 +123,27 @@ struct PermissionProbeTests {
         for _ in 0..<50 { await Task.yield() }
         let baseline = permissions.checkCount
 
-        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
-        for _ in 0..<50 { await Task.yield() }
+        await activate()   // launch
+        await activate()   // a real return to the app
 
         #expect(viewModel.permissionStatus == .granted)
         #expect(permissions.checkCount == baseline, "Already granted — nothing to ask")
     }
 
-    /// BL-040 regression guard. Skipping the probe when granted must not become
-    /// skipping it when it is the only thing that can notice a grant.
-    @Test("Activation still re-detects a grant made while the app was running")
+    /// BL-040 regression guard. Skipping the probe when granted, and swallowing
+    /// the launch activation, must not become skipping the one probe that can
+    /// notice a grant made while the app was running.
+    @Test("A later activation still re-detects a grant made while the app was running")
     func activationReprobesWhenNotGranted() async {
         let permissions = MockPermissionProviding(.denied)
         let viewModel = makeViewModel(permissions)
         for _ in 0..<50 { await Task.yield() }
         #expect(viewModel.permissionStatus == .denied)
 
+        await activate()   // launch — swallowed
         permissions.status = .granted
-        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
-        while viewModel.permissionStatus != .granted { await Task.yield() }
+        await activate()   // returning from System Settings
+        for _ in 0..<500 where viewModel.permissionStatus != .granted { await Task.yield() }
 
         #expect(viewModel.permissionStatus == .granted)
         #expect(permissions.checkCount >= 1)
