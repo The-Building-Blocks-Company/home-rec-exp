@@ -41,8 +41,34 @@ class RecorderViewModel: ObservableObject {
     /// launches; mutate only via `setFormat(_:)`.
     @Published private(set) var selectedFormat: AudioFormat = .wav
 
+    /// Where this bundle is running from (BL-082). Fixed for the process' lifetime —
+    /// the bundle cannot move out from under a running app.
+    let installLocation: InstallLocation
+
+    /// Whether the install-location explanation is currently on screen.
+    @Published private(set) var showsInstallLocationNotice = false
+
+    /// Set once the user dismisses a *soft* note. Has no effect on the hard block.
+    @Published private(set) var installNoticeDismissed = false
+
     /// Whether a recording is actively capturing. Derived from `state`.
     var isRecording: Bool { state == .recording }
+
+    /// Recording is refused outright only for a translocated bundle: the grant it
+    /// needs cannot survive, so "it worked once and then stopped" is the *best*
+    /// case if we let it through. Merely living outside `/Applications` never
+    /// blocks — that is a legitimate choice TCC handles fine, and conflating the
+    /// two trains users to dismiss the warning that matters.
+    var installLocationBlocksRecording: Bool { installLocation.blocksRecording }
+
+    /// The note to show about the install location, or `nil` when there is nothing
+    /// worth saying. A soft note disappears once dismissed; the hard block does
+    /// not, because dismissing it would leave the app quietly unable to hold a grant.
+    var installNotice: String? {
+        guard let text = installLocation.explanation else { return nil }
+        if installLocation.noticeIsDismissible && installNoticeDismissed { return nil }
+        return text
+    }
 
     /// Full path of the current save location, for tooltips / accessibility.
     var saveLocationPath: String { saveLocation.resolvedDirectory.path }
@@ -62,6 +88,15 @@ class RecorderViewModel: ObservableObject {
     /// The guide panel, created on first use — a menu-bar app may never have
     /// shown a window, so it can't be owned by one.
     private var guidePanel: PermissionGuidePanel?
+    private let installLocationProvider: InstallLocationProviding
+    /// The install-location panel, created on first use for the same reason.
+    private var installNoticePanel: FloatingPanelHost?
+    /// Overrides how the install-location notice is presented.
+    ///
+    /// Exists for tests: the default presenter materialises a real `NSPanel` and
+    /// orders it on screen, which a unit test asserting "translocation blocks
+    /// recording" has no business doing. Production never passes this.
+    private let installNoticePresenter: (() -> Void)?
     private let defaults: UserDefaults
     private let onboardingCompletedKey = "hasCompletedOnboarding"
     private let selectedFormatKey = "selectedFormat"
@@ -73,8 +108,14 @@ class RecorderViewModel: ObservableObject {
         permissions: PermissionProviding? = nil,
         clock: DurationClock? = nil,
         saveLocation: SaveLocationProviding? = nil,
-        defaults: UserDefaults = .standard
+        installLocation: InstallLocationProviding? = nil,
+        defaults: UserDefaults = .standard,
+        installNoticePresenter: (() -> Void)? = nil
     ) {
+        let resolvedInstallLocation = installLocation ?? BundleInstallLocation()
+        self.installLocationProvider = resolvedInstallLocation
+        self.installLocation = resolvedInstallLocation.location
+        self.installNoticePresenter = installNoticePresenter
         let resolvedSaveLocation = saveLocation ?? SaveLocationManager(defaults: defaults)
         self.saveLocation = resolvedSaveLocation
         self.controller = controller ?? RecordingController(saveLocation: resolvedSaveLocation)
@@ -98,6 +139,11 @@ class RecorderViewModel: ObservableObject {
         }
         Task {
             await checkPermission()
+        }
+        // A translocated bundle is broken from the first launch, so say so at
+        // launch rather than waiting for the user to hit a wall.
+        if self.installLocation.blocksRecording {
+            showInstallLocationNotice()
         }
     }
 
@@ -147,6 +193,16 @@ class RecorderViewModel: ObservableObject {
     func startRecording() async {
         // Only legal from idle or a prior error state.
         guard state.canTransition(to: .starting) else { return }
+
+        // Install location is checked *before* permission (BL-082). A translocated
+        // bundle can be granted permission and will still lose it on the next
+        // launch, so sending the user into the permission flow here would hand them
+        // advice that is worse than useless — they'd follow it correctly and the
+        // grant would evaporate anyway.
+        guard !installLocation.blocksRecording else {
+            showInstallLocationNotice()
+            return
+        }
 
         // Check permission first; if not granted, remain in the current state.
         if permissionStatus != .granted {
@@ -240,9 +296,64 @@ class RecorderViewModel: ObservableObject {
     /// ("only captures audio") points people at the one section it isn't listed in.
     /// The panel outlives the focus change and says where to look; the poll loop
     /// notices the grant without the user having to come back and check.
+    /// Runtime ordering (BL-082): the install-location check runs *before* the
+    /// permission guide, and replaces it entirely when the bundle is translocated.
+    /// Telling a translocated user to flip a toggle is actively harmful — they will
+    /// do it correctly, the grant will still evaporate on relaunch, and they will
+    /// now believe the app simply doesn't work. So neither the guide nor System
+    /// Settings is opened in that case.
     func openSystemSettings() {
+        guard !installLocation.blocksRecording else {
+            showInstallLocationNotice()
+            return
+        }
         showPermissionGuide()
         permissions.openSystemPreferences()
+    }
+
+    // MARK: - Install location (BL-082)
+
+    /// Show the install-location explanation, creating its panel on first use.
+    func showInstallLocationNotice() {
+        guard let message = installNotice else { return }
+        showsInstallLocationNotice = true
+
+        if let installNoticePresenter {
+            installNoticePresenter()
+            return
+        }
+
+        if installNoticePanel == nil {
+            let panel = FloatingPanelHost(title: "Home Rec", width: 340) { [weak self] in
+                AnyView(
+                    InstallLocationNoticeView(
+                        message: message,
+                        onReveal: { self?.revealAppInFinder() },
+                        onDismiss: { self?.dismissInstallLocationNotice() }
+                    )
+                )
+            }
+            panel.onWillClose = { [weak self] in self?.showsInstallLocationNotice = false }
+            installNoticePanel = panel
+        }
+        installNoticePanel?.show()
+    }
+
+    /// Dismiss the notice. A soft note stays dismissed; the hard block will come
+    /// back the next time recording is attempted, because nothing has been fixed.
+    func dismissInstallLocationNotice() {
+        showsInstallLocationNotice = false
+        if installLocation.noticeIsDismissible {
+            installNoticeDismissed = true
+        }
+        installNoticePanel?.dismiss()
+    }
+
+    /// Reveal the app bundle itself in Finder. The translocated path is randomised
+    /// and unguessable, so this is the only practical way for the user to get hold
+    /// of the bundle they've been asked to drag.
+    func revealAppInFinder() {
+        NSWorkspace.shared.activateFileViewerSelecting([installLocationProvider.bundleURL])
     }
 
     /// Whether the guide panel is currently on screen.

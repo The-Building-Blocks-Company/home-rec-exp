@@ -36,6 +36,30 @@ struct RecorderView: View {
                     .animation(.easeOut(duration: 0.1), value: viewModel.waveformSamples)
             }
 
+            // Soft install-location note (BL-082): shown only for the dismissible
+            // tier. Translocation gets the floating panel instead — it is a block,
+            // not a note, and it has to stay readable while the user is in Finder.
+            if viewModel.installLocation.noticeIsDismissible,
+               let notice = viewModel.installNotice {
+                HStack(spacing: 8) {
+                    Text(notice)
+                        .font(.custom("Inter-Regular", size: 11, relativeTo: .caption))
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        viewModel.dismissInstallLocationNotice()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
+                }
+            }
+
             // Permission guidance (inline, above button).
             //
             // The trust line and the navigation line do different jobs and must not

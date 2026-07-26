@@ -179,6 +179,23 @@ final class MockSaveLocationProviding: SaveLocationProviding {
     }
 }
 
+/// Install location as a test input (BL-082). Defaults to `.applications` so the
+/// existing suites — which care about recording, not about where the bundle
+/// lives — are unaffected by the location tier.
+@MainActor
+final class MockInstallLocationProviding: InstallLocationProviding {
+    var location: InstallLocation
+    var bundleURL: URL
+
+    init(
+        _ location: InstallLocation = .applications,
+        bundleURL: URL = URL(fileURLWithPath: "/Applications/Home Rec.app")
+    ) {
+        self.location = location
+        self.bundleURL = bundleURL
+    }
+}
+
 @MainActor
 final class ManualClock: DurationClock {
     var now: Date = Date(timeIntervalSinceReferenceDate: 0)
