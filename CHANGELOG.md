@@ -13,6 +13,10 @@ _Nothing yet._
 
 ## [1.0.1] - 2026-07-26
 
+> **Status: built, signed and notarized; not yet published.** Tagging is gated on a
+> manual pass — the translocation block, the Settings-list registration ordering,
+> and grant survival can only be verified by hand on a real install.
+>
 > A permission-funnel patch. Everything here is about the gap between downloading
 > Home Rec and successfully granting it permission — the point where first-time
 > users were silently getting stuck. No change to recording, formats, or output.
