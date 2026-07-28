@@ -126,7 +126,6 @@ struct RecorderViewModelTests {
             controller: controller,
             permissions: permission,
             clock: ManualClock(),
-            guidePresenter: {},
             pollClock: ImmediatePollClock(),
             registrationTimeout: 0
         )

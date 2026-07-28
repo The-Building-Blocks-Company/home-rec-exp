@@ -110,11 +110,9 @@ class RecorderViewModel: ObservableObject {
     /// In-flight permission probe, so overlapping callers share one result
     /// rather than racing to write `permissionStatus`. See `checkPermission()`.
     private var permissionProbe: Task<PermissionStatus, Never>?
-    /// The guide panel, created on first use — a menu-bar app may never have
-    /// shown a window, so it can't be owned by one.
-    private var guidePanel: PermissionGuidePanel?
-    /// Retained alongside the panel so `isOpeningSettings` can be mirrored onto it.
-    private var guideModel: PermissionGuideModel?
+    /// Watches for a grant made in System Settings while the app runs (BL-088).
+    /// Created on first use; started only from a user's own click.
+    private var grantWatcher: PermissionGrantWatcher?
     private let installLocationProvider: InstallLocationProviding
     /// The install-location panel, created on first use for the same reason.
     private var installNoticePanel: FloatingPanelHost?
@@ -124,9 +122,6 @@ class RecorderViewModel: ObservableObject {
     /// orders it on screen, which a unit test asserting "translocation blocks
     /// recording" has no business doing. Production never passes this.
     private let installNoticePresenter: (() -> Void)?
-    /// Same idea for the permission guide: production builds a real panel, tests
-    /// substitute a counter so the suite never orders an `NSPanel` on screen.
-    private let guidePresenter: (() -> Void)?
     /// Visible main windows, reported by the windows themselves.
     ///
     /// Deliberately *not* inferred from `NSApp.windows`: at init no window exists
@@ -159,7 +154,6 @@ class RecorderViewModel: ObservableObject {
         installLocation: InstallLocationProviding? = nil,
         defaults: UserDefaults = .standard,
         installNoticePresenter: (() -> Void)? = nil,
-        guidePresenter: (() -> Void)? = nil,
         notificationCenter: NotificationCenter = .default,
         pollClock: PollClock? = nil,
         registrationTimeout: TimeInterval = 2.0
@@ -171,7 +165,6 @@ class RecorderViewModel: ObservableObject {
         self.installLocationProvider = resolvedInstallLocation
         self.installLocation = resolvedInstallLocation.location
         self.installNoticePresenter = installNoticePresenter
-        self.guidePresenter = guidePresenter
         let resolvedSaveLocation = saveLocation ?? SaveLocationManager(defaults: defaults)
         self.saveLocation = resolvedSaveLocation
         self.controller = controller ?? RecordingController(saveLocation: resolvedSaveLocation)
@@ -414,11 +407,20 @@ class RecorderViewModel: ObservableObject {
             showInstallLocationNotice()
             return
         }
-        showPermissionGuide()
-        setOpeningSystemSettings(true)
+        // Set here explicitly, not as a side effect of some other call (BL-088):
+        // the activation observer's re-probe is gated on this flag, and losing it
+        // silently breaks the grant re-detection on returning from Settings.
+        hasSoughtPermission = true
+        // The main window is the only in-app surface now (BL-088) — no panel. But
+        // the grant must still be *noticed* without the user doing anything: a
+        // single probe on return can race the TCC write (observed: stuck at
+        // "Almost ready" until relaunch), so a bounded poll watches for it and
+        // the window flips the moment it lands.
+        startGrantWatcher()
+        isOpeningSystemSettings = true
         Task { @MainActor in
             await awaitRegistration()
-            setOpeningSystemSettings(false)
+            isOpeningSystemSettings = false
             // Now that the answer is known: if it was already granted, there is
             // nothing to send the user to Settings for.
             guard permissionStatus != .granted else { return }
@@ -426,11 +428,17 @@ class RecorderViewModel: ObservableObject {
         }
     }
 
-    /// Mirror the in-flight state onto the guide model, which is what the panel's
-    /// button observes.
-    private func setOpeningSystemSettings(_ opening: Bool) {
-        isOpeningSystemSettings = opening
-        guideModel?.isOpeningSettings = opening
+    /// Start (or resume) watching for the grant. Idempotent.
+    private func startGrantWatcher() {
+        if grantWatcher == nil {
+            let watcher = PermissionGrantWatcher(permissions: permissions, clock: pollClock)
+            watcher.onGranted = { [weak self] in
+                // Mirror into the app's own state so every surface updates.
+                Task { @MainActor in await self?.checkPermission() }
+            }
+            grantWatcher = watcher
+        }
+        grantWatcher?.startPolling()
     }
 
     /// Wait for one authoritative probe, but not forever.
@@ -549,33 +557,8 @@ class RecorderViewModel: ObservableObject {
     }
 
     /// Whether the guide panel is currently on screen.
-    var permissionGuideIsVisible: Bool { guidePanel?.isVisible ?? false }
-
-    /// Show the guide panel, creating it on first use.
-    func showPermissionGuide() {
-        hasSoughtPermission = true
-        if let guidePresenter {
-            guidePresenter()
-            return
-        }
-        if guidePanel == nil {
-            let model = PermissionGuideModel(permissions: permissions)
-            guideModel = model
-            // If TCC has never been asked, macOS will very likely raise its own
-            // dialog alongside this panel — say so, once (BL-087).
-            model.promptLikely = (permissionStatus == .notDetermined)
-            model.onGranted = { [weak self] in
-                // Mirror the grant into the app's own state so every surface
-                // updates, not just the panel.
-                Task { @MainActor in await self?.checkPermission() }
-            }
-            guidePanel = PermissionGuidePanel(model: model) { [weak self] in
-                guard let self else { return }
-                self.permissions.openSystemPreferences()
-            }
-        }
-        guidePanel?.show()
-    }
+    /// Whether the grant watcher's poll is currently running (BL-088 test seam).
+    var grantWatcherIsPolling: Bool { grantWatcher?.isPolling ?? false }
 
     /// Present the folder chooser; persist the picked directory.
     func chooseSaveLocation() {

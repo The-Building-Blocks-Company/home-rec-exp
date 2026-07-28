@@ -63,29 +63,30 @@ struct PermissionProbeTests {
 
     // MARK: - The guide's poll loop
 
-    /// Guards the inverse mistake: "optimising" the loop onto the silent API.
+    /// Guards the inverse mistake: "optimising" the watcher onto the silent API.
     /// The real `CGPreflightScreenCaptureAccess` latches its answer at process
     /// start — measured holding `.granted` for 57s after permission was revoked —
     /// so a loop built on it would wait forever for a grant it can never see.
-    /// The mock reproduces that by pinning `preflightStatus` while `status` moves.
-    @Test("The guide polls the live API, not the latched one")
-    func guidePollsTheLiveAPI() async {
+    @Test("The grant watcher polls the live API, not the latched one")
+    func watcherPollsTheLiveAPI() async {
         let permissions = MockPermissionProviding(.denied)
         permissions.preflightStatus = .denied     // frozen, as the real API is
-        let model = PermissionGuideModel(
+        let watcher = PermissionGrantWatcher(
             permissions: permissions,
             clock: ImmediatePollClock(),
             interval: 0
         )
+        var granted = false
+        watcher.onGranted = { granted = true }
 
-        model.startPolling()
+        watcher.startPolling()
         for _ in 0..<2000 where permissions.checkCount < 3 { await Task.yield() }
 
         // The system grants; preflight stays stale forever.
         permissions.status = .granted
-        for _ in 0..<2000 where model.state != .granted { await Task.yield() }
+        for _ in 0..<2000 where !granted { await Task.yield() }
 
-        #expect(model.state == .granted, "A latched preflight would never reach this")
+        #expect(granted, "A latched preflight would never reach this")
         #expect(permissions.preflightCount == 0, "The loop must not use the silent API")
     }
 
@@ -167,7 +168,6 @@ struct PermissionProbeTests {
             controller: MockRecordingControlling(),
             permissions: permissions,
             clock: ManualClock(),
-            guidePresenter: {},          // no real NSPanel in a unit test
             notificationCenter: center,
             pollClock: clock,
             registrationTimeout: 0
@@ -229,5 +229,44 @@ struct PermissionProbeTests {
 
         #expect(viewModel.permissionStatus == .granted)
         #expect(permissions.openSettingsCount == 0)
+    }
+
+    // MARK: - Grant detection without the panel (BL-088)
+
+    /// The exact check-4 failure: grant via the Settings toggle while the app
+    /// sits untouched in the background. With only a single return-probe this
+    /// races the TCC write and can strand the app at "Almost ready" until
+    /// relaunch — observed live. The watcher's poll must catch it with no user
+    /// interaction at all.
+    @Test("A grant made while the app is backgrounded flips state with no interaction")
+    func backgroundGrantIsDetectedWithoutInteraction() async {
+        let permissions = MockPermissionProviding(.denied)
+        let viewModel = makeSettingsViewModel(permissions, clock: ImmediatePollClock())
+
+        viewModel.openSystemSettings()
+        for _ in 0..<2000 where permissions.checkCount < 3 { await Task.yield() }
+        #expect(viewModel.permissionStatus == .denied)
+
+        // The user flips the toggle in System Settings. No clicks on Home Rec,
+        // no activation — nothing but the state changing out from under us.
+        permissions.status = .granted
+        for _ in 0..<2000 where viewModel.permissionStatus != .granted { await Task.yield() }
+
+        #expect(viewModel.permissionStatus == .granted)
+    }
+
+    /// BL-085 guard on the relocated loop: it must start only behind the user's
+    /// own click, never at launch or on idle activation.
+    @Test("The watcher never polls before the user heads to Settings")
+    func watcherDoesNotPollBeforeIntent() async {
+        let permissions = MockPermissionProviding(.denied)
+        let viewModel = makeViewModel(permissions)
+        for _ in 0..<50 { await Task.yield() }
+
+        await activate()
+        await activate()
+
+        #expect(viewModel.grantWatcherIsPolling == false)
+        #expect(permissions.checkCount == 0)
     }
 }

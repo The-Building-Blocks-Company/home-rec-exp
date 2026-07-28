@@ -183,7 +183,7 @@ struct InstallLocationTests {
 
         #expect(noticeCount == baseline + 1)
         #expect(permissions.openSettingsCount == 0)
-        #expect(viewModel.permissionGuideIsVisible == false)
+        #expect(viewModel.grantWatcherIsPolling == false)
     }
 
     /// Regression guard for a defect found in manual testing of v1.0.1: the
