@@ -50,6 +50,15 @@ class AudioRecorder: AudioFileWriting {
 
     private var encoder: (any AudioFileEncoder)?
 
+    /// How an encoder is built for a format. Injectable so tests can drive the
+    /// stop path with an encoder that fails to finalize (BL-016) — the real app
+    /// always uses `AudioFormat.makeEncoder()`.
+    private let encoderFactory: (AudioFormat) throws -> any AudioFileEncoder
+
+    init(encoderFactory: @escaping (AudioFormat) throws -> any AudioFileEncoder = { try $0.makeEncoder() }) {
+        self.encoderFactory = encoderFactory
+    }
+
     private let sampleRate: Double = 48000  // Match ScreenCaptureKit config
     private let channels: Int = 2           // Stereo
 
@@ -71,7 +80,7 @@ class AudioRecorder: AudioFileWriting {
     ///     `channels` are the capture (input) format; the encoder owns its output.
     /// - Throws: the format's `makeEncoder()` error, or a file-creation error.
     func startRecording(to fileURL: URL, format: AudioFormat) throws {
-        let encoder = try format.makeEncoder()
+        let encoder = try encoderFactory(format)
         try encoder.createFile(at: fileURL, sampleRate: sampleRate, channels: channels)
 
         // Confine the encoder to the processing queue: capture and stop threads
@@ -102,8 +111,14 @@ class AudioRecorder: AudioFileWriting {
             guard encoder != nil else {
                 throw AudioRecorderError.notRecording
             }
-            try? encoder?.finalize()
-            encoder = nil
+            // Release the encoder even if finalize fails, otherwise a failed
+            // finalize would leave the recorder permanently "recording" and
+            // refuse every subsequent start.
+            defer { encoder = nil }
+            // BL-016: this was `try?`, which discarded every conformer's finalize
+            // error — a failed M4A finish was invisible to the user. The error
+            // now propagates and surfaces as `.stopFailed`.
+            try encoder?.finalize()
         }
     }
 

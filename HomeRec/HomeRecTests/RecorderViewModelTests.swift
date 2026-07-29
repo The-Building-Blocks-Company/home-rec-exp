@@ -164,6 +164,33 @@ struct RecorderViewModelTests {
         #expect(clock.isTicking == false)
     }
 
+    /// BL-016 made the stop path's catch branch reachable (finalize errors used
+    /// to be swallowed inside AudioRecorder). The timer must be torn down there
+    /// too — otherwise it keeps republishing `duration` at 10Hz for the lifetime
+    /// of the app, and can fire the long-recording warning about a recording
+    /// that has already ended.
+    @Test("A failed stop surfaces the error and still stops the timer")
+    func failedStopStopsTheTimer() async {
+        struct FinalizeFailure: Error {}
+        let controller = MockRecordingControlling()
+        let clock = ManualClock()
+        let viewModel = makeViewModel(controller: controller, clock: clock)
+
+        await viewModel.startRecording()
+        #expect(clock.isTicking)
+
+        controller.stopError = FinalizeFailure()
+        await viewModel.stopRecording()
+
+        // The failure is surfaced, not silently treated as a clean stop…
+        if case .error(.stopFailed) = viewModel.state {} else {
+            Issue.record("expected .stopFailed, got \(viewModel.state)")
+        }
+        // …and the timer is not leaked.
+        #expect(clock.isTicking == false)
+        #expect(viewModel.isRecording == false)
+    }
+
     @Test("Onboarding shows on first launch, and not after completion (BL-041)")
     func onboardingShownOnce() {
         let defaults = UserDefaults(suiteName: "onboarding-test-\(UUID().uuidString)")!

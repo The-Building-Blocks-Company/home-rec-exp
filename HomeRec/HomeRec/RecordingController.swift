@@ -95,14 +95,31 @@ class RecordingController: RecordingControlling {
         // Stop capturing audio
         try await captureManager.stopCapture()
 
-        // Stop recorder and finalize WAV file
-        try audioRecorder.stopRecording()
+        // Finalize the file, but capture the error rather than rethrowing here:
+        // the teardown below must run either way, or a failed finalize would leak
+        // the capture session and leave a stale recording URL behind. (BL-016 —
+        // the error used to be swallowed inside AudioRecorder, so before now this
+        // path could never be reached.)
+        let finalizeError: Error?
+        do {
+            try audioRecorder.stopRecording()
+            finalizeError = nil
+        } catch {
+            finalizeError = error
+        }
 
         // Clean up capture manager
         await captureManager.cleanup()
 
         audioRecorder.onWaveformData = nil
         currentRecordingURL = nil
+
+        if let finalizeError {
+            Log.recorder.error(
+                "Finalize failed on stop: \(finalizeError.localizedDescription, privacy: .public)"
+            )
+            throw finalizeError
+        }
         Log.recorder.info("Recording stopped")
     }
 
@@ -111,7 +128,12 @@ class RecordingController: RecordingControlling {
     /// preserves the audio captured before the failure as a playable file.
     func finalizeAfterFailure() async {
         try? await captureManager.stopCapture()
-        try? audioRecorder.stopRecording()   // finalizes the partial WAV
+        // Deliberately swallowed, unlike the user-initiated stop path (BL-016):
+        // the caller is already reporting `.streamFailed`, which is the more
+        // useful diagnosis, and replacing it with a finalize error would bury
+        // the actual cause. The partial file is preserved either way — for WAV
+        // by its periodic header, for M4A by its movie fragments.
+        try? audioRecorder.stopRecording()
         await captureManager.cleanup()
         audioRecorder.onWaveformData = nil
         currentRecordingURL = nil

@@ -82,4 +82,62 @@ struct AudioRecorderTests {
             try recorder.stopRecording()
         }
     }
+
+    // MARK: - BL-016 finalize-error propagation
+
+    /// An encoder whose `finalize()` always fails, so the stop path's error
+    /// handling can be driven without a real codec failure.
+    private final class FailingFinalizeEncoder: AudioFileEncoder {
+        struct Boom: Error, Equatable {}
+        private(set) var finalizeCount = 0
+        func createFile(at url: URL, sampleRate: Double, channels: Int) throws {
+            FileManager.default.createFile(atPath: url.path, contents: Data())
+        }
+        func writeBuffer(_ buffer: AVAudioPCMBuffer) throws {}
+        func finalize() throws {
+            finalizeCount += 1
+            throw Boom()
+        }
+    }
+
+    @Test("A finalize failure propagates instead of being silently swallowed")
+    func finalizeErrorPropagates() throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let recorder = AudioRecorder(encoderFactory: { _ in FailingFinalizeEncoder() })
+        try recorder.startRecording(to: url, format: .wav)
+
+        #expect(throws: FailingFinalizeEncoder.Boom.self) {
+            try recorder.stopRecording()
+        }
+    }
+
+    /// The regression this guards: releasing the encoder inside a `defer` so a
+    /// failed finalize can't strand the recorder in a permanently-recording state
+    /// that refuses every subsequent start.
+    @Test("A failed finalize still releases the encoder")
+    func failedFinalizeStillClearsState() throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let recorder = AudioRecorder(encoderFactory: { _ in FailingFinalizeEncoder() })
+        try recorder.startRecording(to: url, format: .wav)
+        #expect(recorder.recording)
+
+        #expect(throws: FailingFinalizeEncoder.Boom.self) {
+            try recorder.stopRecording()
+        }
+
+        #expect(!recorder.recording)
+        // A second stop reports "not recording", not another finalize attempt.
+        #expect(throws: AudioRecorderError.self) {
+            try recorder.stopRecording()
+        }
+        // And a fresh recording can still be started.
+        let next = tempURL()
+        defer { try? FileManager.default.removeItem(at: next) }
+        try recorder.startRecording(to: next, format: .wav)
+        #expect(recorder.recording)
+    }
 }

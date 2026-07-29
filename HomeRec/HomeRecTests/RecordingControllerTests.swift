@@ -72,4 +72,44 @@ struct RecordingControllerTests {
         #expect(capture.setupCount == 0)
         #expect(controller.recordingURL == nil)
     }
+
+    // MARK: - BL-016 teardown ordering
+
+    private struct FinalizeFailure: Error, Equatable {}
+
+    /// The regression this guards: a finalize failure must not skip teardown.
+    /// Rethrowing straight out of `stopRecording()` would leak the SCStream and
+    /// strand a stale recording URL — a worse outcome than the error itself.
+    @Test("A finalize failure still tears down capture, then rethrows")
+    func finalizeFailureStillTearsDown() async throws {
+        let recorder = MockAudioFileWriting()
+        let capture = MockAudioCapturing()
+        let controller = makeController(recorder: recorder, capture: capture)
+
+        _ = try await controller.startRecording(format: .wav)
+        recorder.stopError = FinalizeFailure()
+
+        await #expect(throws: FinalizeFailure.self) {
+            try await controller.stopRecording()
+        }
+
+        // Teardown completed despite the throw.
+        #expect(capture.stopCount == 1)
+        #expect(capture.cleanupCount == 1)
+        #expect(controller.recordingURL == nil)
+    }
+
+    @Test("A clean stop tears down and does not throw")
+    func cleanStopTearsDown() async throws {
+        let recorder = MockAudioFileWriting()
+        let capture = MockAudioCapturing()
+        let controller = makeController(recorder: recorder, capture: capture)
+
+        _ = try await controller.startRecording(format: .wav)
+        try await controller.stopRecording()
+
+        #expect(recorder.stopCount == 1)
+        #expect(capture.cleanupCount == 1)
+        #expect(controller.recordingURL == nil)
+    }
 }

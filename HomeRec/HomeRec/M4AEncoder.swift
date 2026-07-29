@@ -40,6 +40,15 @@ final class M4AEncoder: AudioFileEncoder {
     private let outputSampleRate: Double = 44_100
     private let bitRate: Int = 256_000
 
+    /// Flush a movie fragment this often so the file on disk stays playable even
+    /// if `finalize()` never runs (crash / force-quit). This is the M4A analogue
+    /// of `WAVWriter.headerUpdateInterval` (BL-022): without it AVFoundation
+    /// writes the `moov` atom *only* at `finishWriting`, and a mid-recording copy
+    /// is completely unreadable — measured in BL-016, where fragmenting recovered
+    /// everything up to the last flushed fragment. Recovery granularity equals
+    /// this interval; the cost is ~6% larger output.
+    static let fragmentIntervalSeconds: Double = 1.0
+
     private var writer: AVAssetWriter?
     private var input: AVAssetWriterInput?
 
@@ -62,6 +71,11 @@ final class M4AEncoder: AudioFileEncoder {
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .m4a) else {
             throw M4AEncoderError.setupFailed
         }
+        // Must be set before `startWriting()` — see `fragmentIntervalSeconds`.
+        writer.movieFragmentInterval = CMTime(
+            seconds: Self.fragmentIntervalSeconds,
+            preferredTimescale: 600
+        )
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: outputSampleRate,

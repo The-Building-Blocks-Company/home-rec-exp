@@ -344,12 +344,19 @@ class RecorderViewModel: ObservableObject {
 
         transition(to: .stopping)
 
-        do {
-            try await controller.stopRecording()
-
+        // Tear the timer and waveform down on *both* paths. Before BL-016 the
+        // catch branch was unreachable for finalize failures (the error was
+        // swallowed inside AudioRecorder), so this only started to matter once
+        // the error became live: a leaked timer republishes `duration` at 10Hz
+        // for the lifetime of the app and can fire the long-recording warning
+        // about a recording that has already ended.
+        defer {
             stopTimer()
             waveformSamples = Array(repeating: 0, count: 200)
+        }
 
+        do {
+            try await controller.stopRecording()
             transition(to: .idle)
 
         } catch {

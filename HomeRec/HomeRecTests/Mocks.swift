@@ -59,6 +59,9 @@ final class MockAudioFileWriting: AudioFileWriting {
     private(set) var lastStartFormat: AudioFormat?
     /// Fired each time `stopRecording()` (the finalize point) is called.
     var onStop: (() -> Void)?
+    /// If set, `stopRecording()` throws this — models a finalize failure so the
+    /// controller's teardown-before-rethrow ordering can be asserted (BL-016).
+    var stopError: Error?
 
     func startRecording(to fileURL: URL, format: AudioFormat) throws {
         startCount += 1
@@ -72,6 +75,7 @@ final class MockAudioFileWriting: AudioFileWriting {
         stopCount += 1
         recording = false
         onStop?()
+        if let stopError { throw stopError }
     }
 }
 
