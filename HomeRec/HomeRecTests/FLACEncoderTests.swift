@@ -47,10 +47,14 @@ struct FLACEncoderTests {
         Float(min(max((x * 8_388_608).rounded(), -8_388_608), 8_388_607)) / 8_388_608
     }
 
+    /// Deliberately **asymmetric** across channels. An antisymmetric fixture
+    /// (ch1 = -ch0) cannot detect a channel swap — `data[0] == -data[1]` holds
+    /// just as well when the channels are exchanged — so the scaling factor is
+    /// what makes `channelsAreNotSwapped` able to fail.
     private func sample(_ index: Int, _ frame: Int, channel: Int) -> Float {
         let n = index * framesPerBuffer + frame
         let v = Float(sin(Double(n) * 0.02)) * 0.4
-        return channel == 0 ? v : -v
+        return channel == 0 ? v : -v * 0.5
     }
 
     private func buffer(_ index: Int) -> AVAudioPCMBuffer {
@@ -79,8 +83,7 @@ struct FLACEncoderTests {
         try encodeStream(to: url)
 
         // `fLaC` magic — the thing that is absent from a short-take stub.
-        let head = try FileHandle(forReadingFrom: url).read(upToCount: 4)
-        #expect(head.map { Array($0) } == Array("fLaC".utf8))
+        #expect(Array(try Data(contentsOf: url).prefix(4)) == Array("fLaC".utf8))
 
         let file = try AVAudioFile(forReading: url)
         #expect(file.fileFormat.channelCount == AVAudioChannelCount(channels))
@@ -107,7 +110,10 @@ struct FLACEncoderTests {
 
         let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int ?? 0
         #expect(size > 0)
-        #expect(size < totalFrames * channels * 3)
+        // Measured ~0.15x on this signal, so 0.75x still leaves ~5x headroom
+        // while actually noticing if compression stopped happening. The loose
+        // "smaller than raw 24-bit" bound would pass even on uncompressed 16-bit.
+        #expect(size < totalFrames * channels * 3 * 3 / 4)
     }
 
     // MARK: - Losslessness
@@ -126,6 +132,10 @@ struct FLACEncoderTests {
         )
         let readback = try #require(read)
         try file.read(into: readback)
+        // Without this the loops below can pass vacuously: `read(into:)` fills
+        // *up to* capacity, so a future OS returning one packet per call would
+        // silently shrink coverage instead of failing.
+        #expect(readback.frameLength == AVAudioFrameCount(totalFrames))
         let data = try #require(readback.floatChannelData)
 
         // Report once, not 98,304 times.
@@ -164,6 +174,7 @@ struct FLACEncoderTests {
             frameCapacity: AVAudioFrameCount(file.length)
         ))
         try file.read(into: read)
+        #expect(read.frameLength == FLACEncoder.minimumEncodableFrames)
         let data = try #require(read.floatChannelData)
 
         for frame in 0..<min(probes.count * 4, Int(read.frameLength)) {
@@ -184,14 +195,18 @@ struct FLACEncoderTests {
             frameCapacity: AVAudioFrameCount(file.length)
         ))
         try file.read(into: read)
+        #expect(read.frameLength == AVAudioFrameCount(totalFrames))
         let data = try #require(read.floatChannelData)
 
-        // The fixture fills ch0 with +v and ch1 with -v.
-        var wrongSign = 0
-        for frame in 0..<Int(read.frameLength) where data[0][frame] != -data[1][frame] {
-            wrongSign += 1
+        // ch1 is -0.5x ch0, so exchanging the channels breaks the relationship.
+        var wrong = 0
+        for frame in 0..<Int(read.frameLength)
+        where data[1][frame] != quantize24(-0.5 * sample(frame / framesPerBuffer,
+                                                         frame % framesPerBuffer,
+                                                         channel: 0)) {
+            wrong += 1
         }
-        #expect(wrongSign == 0)
+        #expect(wrong == 0)
     }
 
     // MARK: - Safety guards
@@ -254,7 +269,105 @@ struct FLACEncoderTests {
         }
     }
 
+    /// The dimension the *uncatchable abort* actually hangs off. An Int16
+    /// non-interleaved buffer overruns ExtAudioFile's input and kills the
+    /// process — no Swift error, no NSException, nothing to catch. Without this
+    /// test, weakening the guard to compare only sampleRate/channels/interleaved
+    /// (all of which the other guard tests pin) would keep the suite green while
+    /// fully reopening the crash. If the guard is ever removed, this test aborts
+    /// the test host rather than failing cleanly — that is the intended and only
+    /// possible signal.
+    @Test("An Int16 buffer throws rather than aborting the process")
+    func int16BufferThrows() throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let encoder: any AudioFileEncoder = FLACEncoder()
+        try encoder.createFile(at: url, sampleRate: sampleRate, channels: channels)
+
+        let int16Format = try #require(AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: sampleRate,
+            channels: AVAudioChannelCount(channels),
+            interleaved: false
+        ))
+        let int16Buffer = try #require(AVAudioPCMBuffer(
+            pcmFormat: int16Format,
+            frameCapacity: AVAudioFrameCount(framesPerBuffer)
+        ))
+        int16Buffer.frameLength = AVAudioFrameCount(framesPerBuffer)
+
+        #expect(throws: FLACEncoderError.formatMismatch) {
+            try encoder.writeBuffer(int16Buffer)
+        }
+    }
+
+    @Test("An unwritable destination throws .setupFailed")
+    func unwritableDestinationThrows() {
+        let encoder: any AudioFileEncoder = FLACEncoder()
+        let url = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)/out.flac")
+
+        #expect(throws: FLACEncoderError.setupFailed) {
+            try encoder.createFile(at: url, sampleRate: sampleRate, channels: channels)
+        }
+    }
+
     // MARK: - Short takes
+
+    /// The silent-data-loss guard. `AudioRecorder` swallows write errors on the
+    /// hot path (`try? writeBuffer`), so if the format guard rejected *every*
+    /// buffer, padding would happily produce a 96ms silent file and report
+    /// success — a five-minute recording lost with no error anywhere. Failing
+    /// loudly is the whole point.
+    @Test("A recording that captured nothing fails instead of padding to silence")
+    func zeroFramesFailsRatherThanPadding() throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let encoder: any AudioFileEncoder = FLACEncoder()
+        try encoder.createFile(at: url, sampleRate: sampleRate, channels: channels)
+
+        // Every buffer rejected — exactly what a capture-format drift produces.
+        let mono = SampleBufferFixtures.makePCMBuffer(
+            channels: 1, frames: framesPerBuffer,
+            sampleRate: sampleRate, interleaved: false
+        ) { _, _ in 0.25 }
+        for _ in 0..<8 {
+            #expect(throws: FLACEncoderError.formatMismatch) {
+                try encoder.writeBuffer(mono)
+            }
+        }
+
+        #expect(throws: FLACEncoderError.noAudioWritten) {
+            try encoder.finalize()
+        }
+    }
+
+    /// One bad buffer must not poison the rest of the recording.
+    @Test("The encoder survives a rejected buffer and keeps an exact frame count")
+    func recoversAfterRejectedBuffer() throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let encoder: any AudioFileEncoder = FLACEncoder()
+        try encoder.createFile(at: url, sampleRate: sampleRate, channels: channels)
+
+        try encoder.writeBuffer(buffer(0))
+        #expect(throws: FLACEncoderError.formatMismatch) {
+            try encoder.writeBuffer(SampleBufferFixtures.makePCMBuffer(
+                channels: 1, frames: framesPerBuffer,
+                sampleRate: sampleRate, interleaved: false
+            ) { _, _ in 0.25 })
+        }
+        for i in 1..<bufferCount {
+            try encoder.writeBuffer(buffer(i))
+        }
+        try encoder.finalize()
+
+        // The rejected buffer contributed nothing; everything else survived.
+        let file = try AVAudioFile(forReading: url)
+        #expect(file.length == AVAudioFramePosition(totalFrames))
+    }
 
     /// Without padding, a sub-packet take produces a 42-byte stub with no `fLaC`
     /// magic that nothing can open. WAV and M4A both handle this fine, so it
@@ -269,11 +382,14 @@ struct FLACEncoderTests {
         try encoder.writeBuffer(buffer(0))     // 1024 frames — well under 4608
         try encoder.finalize()
 
-        let head = try FileHandle(forReadingFrom: url).read(upToCount: 4)
-        #expect(head.map { Array($0) } == Array("fLaC".utf8))
+        #expect(Array(try Data(contentsOf: url).prefix(4)) == Array("fLaC".utf8))
 
         let file = try AVAudioFile(forReading: url)
-        #expect(file.length == AVAudioFramePosition(FLACEncoder.minimumEncodableFrames))
+        // The literal, not the constant: 4608 is an empirically discovered FLAC
+        // packet boundary, not a free parameter. Asserting the constant against
+        // itself would let a change to it pass silently.
+        #expect(file.length == 4_608)
+        #expect(FLACEncoder.minimumEncodableFrames == 4_608)
     }
 
     // MARK: - Lifecycle

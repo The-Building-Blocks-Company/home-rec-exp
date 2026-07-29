@@ -23,23 +23,28 @@ enum FLACEncoderError: Error, LocalizedError, Equatable {
     case setupFailed
     case notOpen
     case formatMismatch
+    case noAudioWritten
     case finalizeFailed
 
     var errorDescription: String? {
         switch self {
-        case .setupFailed:    return "Failed to set up the FLAC encoder"
-        case .notOpen:        return "FLAC file is not open for writing"
-        case .formatMismatch: return "The audio format doesn't match the FLAC file"
-        case .finalizeFailed: return "Failed to finalize the FLAC file"
+        case .setupFailed:     return "Failed to set up the FLAC encoder"
+        case .notOpen:         return "FLAC file is not open for writing"
+        case .formatMismatch:  return "The audio format doesn't match the FLAC file"
+        case .noAudioWritten:  return "No audio was captured for this recording"
+        case .finalizeFailed:  return "Failed to finalize the FLAC file"
         }
     }
 
     var recoverySuggestion: String? {
         switch self {
-        case .setupFailed:    return "Check that the destination folder exists and is writable"
-        case .notOpen:        return "Start a recording before writing audio"
-        case .formatMismatch: return "Stop and start the recording to resynchronise the audio format"
-        case .finalizeFailed: return "Check that there is enough free disk space, then try again"
+        case .setupFailed:     return "Check that the destination folder exists and is writable"
+        case .notOpen:         return "Start a recording before writing audio"
+        case .formatMismatch:  return "Stop and start the recording to resynchronise the audio format"
+        case .noAudioWritten:  return "Check that audio was playing, then record again"
+        // Deliberately does NOT say "try again": the encoder has already released
+        // the file by the time this throws, so a retry can only report .notOpen.
+        case .finalizeFailed:  return "Check that there is enough free disk space, then record again"
         }
     }
 }
@@ -107,19 +112,47 @@ final class FLACEncoder: AudioFileEncoder {
     func finalize() throws {
         guard let file, let url else { throw FLACEncoderError.notOpen }
 
+        // Never pad a recording that captured *nothing*. Padding exists for a
+        // genuinely short take; if not a single buffer was accepted — e.g. the
+        // format guard rejected every one because the capture format drifted —
+        // then padding would turn total failure into a 96ms silent file that
+        // reports success, with `AudioRecorder`'s `try? writeBuffer` having
+        // swallowed each rejection on the hot path. That is the silent-data-loss
+        // shape BL-016 exists to prevent, so fail loudly instead.
+        guard framesWritten > 0 else {
+            file.close()
+            self.file = nil
+            self.url = nil
+            throw FLACEncoderError.noAudioWritten
+        }
+
         // Pad a sub-packet take up to the encodable boundary so it lands as a
         // real file rather than an unopenable stub (see `minimumEncodableFrames`).
         if framesWritten < Self.minimumEncodableFrames {
             let padding = Self.minimumEncodableFrames - framesWritten
-            if let silence = AVAudioPCMBuffer(
+            guard let silence = AVAudioPCMBuffer(
                 pcmFormat: file.processingFormat,
                 frameCapacity: padding
-            ) {
-                silence.frameLength = padding
-                // A fresh AVAudioPCMBuffer is already zeroed, so this is silence.
-                try? file.write(from: silence)
-                framesWritten += padding
+            ) else {
+                throw FLACEncoderError.finalizeFailed
             }
+            silence.frameLength = padding
+            // Zero explicitly. A fresh AVAudioPCMBuffer *is* zeroed in practice
+            // (measured 0/200 trials non-zero against a deliberately dirtied
+            // heap), but Apple documents no such guarantee, and the failure mode
+            // if it ever changed is a burst of full-scale noise appended to every
+            // short recording. One memset per recording is a cheap price for not
+            // resting audio correctness on undocumented behaviour.
+            if let channels = silence.floatChannelData {
+                let bytes = Int(padding) * MemoryLayout<Float>.size
+                for channel in 0..<Int(silence.format.channelCount) {
+                    memset(channels[channel], 0, bytes)
+                }
+            }
+            // Advance the counter only on a successful write, so `expected`
+            // below always describes what is actually on disk.
+            try file.write(from: silence)
+            framesWritten += padding
         }
 
         let expected = framesWritten

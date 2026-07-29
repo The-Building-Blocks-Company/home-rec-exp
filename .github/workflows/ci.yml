@@ -54,6 +54,10 @@ jobs:
         # authoritative TSan run for the BL-024 serial-queue guard is the local dev
         # loop (targeted `-enableThreadSanitizer YES` runs, which are reliable).
         # M4AEncoderTests is skipped — it aborts deterministically (AAC codec).
+        # FLACEncoderTests is skipped for the same reason: it drives the same
+        # AVFoundation/CoreAudio codec machinery via AVAudioFile. An aborting
+        # host yields NO results for ANY test in this job, so one aborting suite
+        # would silently destroy the advisory race signal for the whole run.
         continue-on-error: true
         run: |
           set -o pipefail
@@ -63,6 +67,7 @@ jobs:
             -destination 'platform=macOS' \
             -only-testing:HomeRecTests \
             -skip-testing:HomeRecTests/M4AEncoderTests \
+            -skip-testing:HomeRecTests/FLACEncoderTests \
             -enableThreadSanitizer YES \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO
