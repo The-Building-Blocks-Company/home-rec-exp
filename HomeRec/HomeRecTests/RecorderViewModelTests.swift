@@ -364,7 +364,7 @@ struct RecorderViewModelTests {
     @Test("A valid-but-unavailable stored format falls back to WAV")
     func unavailableStoredFormatFallsBack() {
         let defaults = freshDefaults()
-        defaults.set("flac", forKey: "selectedFormat")   // valid raw value, not in `available`
+        defaults.set("mp3", forKey: "selectedFormat")   // valid raw value, not in `available`
 
         let vm = makeViewModel(controller: MockRecordingControlling(), defaults: defaults)
         #expect(vm.selectedFormat == .wav)
@@ -375,7 +375,7 @@ struct RecorderViewModelTests {
         let defaults = freshDefaults()
         let vm = makeViewModel(controller: MockRecordingControlling(), defaults: defaults)
 
-        vm.setFormat(.flac)   // not in AudioFormat.available
+        vm.setFormat(.mp3)   // not in AudioFormat.available
 
         #expect(vm.selectedFormat == .wav)
         #expect(defaults.string(forKey: "selectedFormat") == nil)
