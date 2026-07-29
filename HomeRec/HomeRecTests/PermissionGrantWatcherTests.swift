@@ -151,6 +151,48 @@ struct PermissionGrantWatcherTests {
         #expect(permissions.checkCount == 5, "Exhausting the budget must actually stop the loop")
     }
 
+    // MARK: - App Nap opt-out
+
+    /// The bug that made BL-088's first cut fail in the real app: with System
+    /// Settings covering the window, macOS App Napped the process and the poll
+    /// stopped firing, so a grant went unnoticed until the user switched back.
+    /// The assertion must be held for exactly as long as the poll runs — held
+    /// too long and a background app is quietly holding power state.
+    @Test("The App Nap opt-out is held while polling and released when it stops")
+    func activityAssertionMatchesPollLifetime() async {
+        let permissions = MockPermissionProviding(.denied)
+        let watcher = makeWatcher(permissions)
+        #expect(watcher.holdsActivityAssertion == false)
+
+        watcher.startPolling()
+        #expect(watcher.holdsActivityAssertion)
+
+        watcher.stopPolling()
+        #expect(watcher.holdsActivityAssertion == false)
+    }
+
+    @Test("The opt-out is released when the grant lands")
+    func activityAssertionReleasedOnGrant() async {
+        let permissions = MockPermissionProviding(.granted)
+        let watcher = makeWatcher(permissions)
+
+        watcher.startPolling()
+        for _ in 0..<2000 where watcher.isPolling { await Task.yield() }
+
+        #expect(watcher.holdsActivityAssertion == false)
+    }
+
+    @Test("The opt-out is released when the budget runs out")
+    func activityAssertionReleasedOnBudget() async {
+        let permissions = MockPermissionProviding(.denied)
+        let watcher = makeWatcher(permissions, maxProbes: 3)
+
+        watcher.startPolling()
+        for _ in 0..<2000 where watcher.isPolling { await Task.yield() }
+
+        #expect(watcher.holdsActivityAssertion == false)
+    }
+
     // MARK: - The overlapping-probe race (view model, unchanged from BL-081)
 
     /// The failure the single-flight prevents: the user grants, and a slower

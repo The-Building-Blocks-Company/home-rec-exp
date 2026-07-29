@@ -39,6 +39,22 @@ final class PermissionGrantWatcher {
     private var probesThisRun = 0
     private var pollTask: Task<Void, Never>?
     private var granted = false
+    /// Keeps macOS from App Napping us while the poll is running.
+    ///
+    /// Measured 2026-07-29: with System Settings covering Home Rec's window, the
+    /// grant went unnoticed until the user switched back; with the two windows
+    /// side by side it was caught immediately. macOS throttles timers for a
+    /// background app whose windows are fully occluded, and the poll is exactly
+    /// that. The old guide panel was accidentally immune — a floating window is
+    /// never occluded — so removing it exposed this.
+    ///
+    /// Bounded by the same budget as the poll, and released the instant it stops,
+    /// so this cannot become a background app quietly holding the system awake.
+    private var activity: NSObjectProtocol?
+
+    /// Whether the App Nap opt-out is currently held (lifecycle test seam — a
+    /// leaked assertion is invisible from behaviour alone).
+    var holdsActivityAssertion: Bool { activity != nil }
 
     /// Called exactly once, when the grant is first observed.
     var onGranted: (() -> Void)?
@@ -62,6 +78,9 @@ final class PermissionGrantWatcher {
         // only teardown that matters — an orphaned loop would keep probing
         // `SCShareableContent` for the life of the process.
         pollTask?.cancel()
+        if let activity {
+            ProcessInfo.processInfo.endActivity(activity)
+        }
     }
 
     /// Begin watching. Idempotent — a second click must not start a second loop.
@@ -73,6 +92,15 @@ final class PermissionGrantWatcher {
     func startPolling() {
         guard pollTask == nil, !granted else { return }
         probesThisRun = 0
+        // `allowingIdleSystemSleep`: we need our own timers to keep firing, not to
+        // keep the machine awake. Someone who grants permission and shuts the lid
+        // should still get to sleep.
+        if activity == nil {
+            activity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep],
+                reason: "Watching for a Screen Recording grant made in System Settings"
+            )
+        }
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let step = await self?.pollStep() else { return }
@@ -89,6 +117,10 @@ final class PermissionGrantWatcher {
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+        if let activity {
+            ProcessInfo.processInfo.endActivity(activity)
+            self.activity = nil
+        }
     }
 
     private enum PollStep {
