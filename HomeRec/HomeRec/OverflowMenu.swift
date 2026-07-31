@@ -25,17 +25,22 @@ struct OverflowAction: Identifiable {
     /// that's what lets one definition feed both SwiftUI's `.keyboardShortcut`
     /// and `NSMenuItem.keyEquivalent` without a translation layer between them.
     let commandKey: Character?
+    /// Shown on hover in the AppKit menu. Used sparingly — only where the row's
+    /// purpose isn't self-evident from its title (BL-140's recovery entry).
+    let toolTip: String?
     let perform: @MainActor () -> Void
 
     init(
         id: String,
         title: String,
         commandKey: Character? = nil,
+        toolTip: String? = nil,
         perform: @escaping @MainActor () -> Void
     ) {
         self.id = id
         self.title = title
         self.commandKey = commandKey
+        self.toolTip = toolTip
         self.perform = perform
     }
 }
@@ -56,6 +61,13 @@ enum OverflowMenu {
     static var entries: [OverflowEntry] {
         [
             .action(OverflowAction(id: "showWindow", title: "Show Window", perform: showMainWindow)),
+            .separator,
+            .action(OverflowAction(
+                id: "recoverRecordings",
+                title: "Recover Recordings…",
+                toolTip: "Useful if you forgot to save a recording, or if Home Rec crashed mid-recording.",
+                perform: showRecovery
+            )),
             .separator,
             .action(OverflowAction(id: "exportDiagnostics", title: "Export Diagnostics…", perform: Diagnostics.exportReport)),
             .action(OverflowAction(id: "reportProblem", title: "Report a Problem", perform: Diagnostics.reportProblem)),
@@ -85,6 +97,16 @@ enum OverflowMenu {
         // scene's window, and the app deliberately outlives its closure, so the
         // window may legitimately be absent here.
         NSApp.windows.first { $0.title == "Home Rec" }?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Supplies the file being written right now, so the recovery window never
+    /// offers the live recording — which is unfinalized by definition. Set once
+    /// at startup by `MenuBarController`; nil when nothing is recording.
+    /// (BL-111 will replace this with a proper menu context.)
+    static var currentRecordingURL: @MainActor () -> URL? = { nil }
+
+    private static func showRecovery() {
+        RecoveryWindowController.shared.show(inProgressURL: currentRecordingURL)
     }
 
     private static func showAbout() {
@@ -132,6 +154,7 @@ extension OverflowMenu {
                     // command-only shortcuts `OverflowAction` models.
                     keyEquivalent: action.commandKey.map(String.init) ?? ""
                 )
+                item.toolTip = action.toolTip
                 let target = OverflowActionTarget(perform: action.perform)
                 item.target = target
                 item.representedObject = target
