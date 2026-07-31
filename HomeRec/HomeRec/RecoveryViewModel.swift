@@ -25,6 +25,15 @@ final class RecoveryViewModel: ObservableObject {
     /// by definition and must never be offered for recovery.
     private let inProgressURL: () -> URL?
 
+    /// Files the user has already dealt with this session.
+    ///
+    /// Detection alone can't carry this. Repairing a WAV or FLAC changes the
+    /// bytes the detector reads, so those rows disappear on the next scan — but
+    /// **M4A repair is intentionally a no-op** (BL-016's fragments already play),
+    /// so its row would survive its own recovery and the button would look dead.
+    /// Requirement 7 is about the user's action, not the file's state.
+    private var handled: Set<URL> = []
+
     init(scanner: RecoveryScanning, inProgressURL: @escaping () -> URL? = { nil }) {
         self.scanner = scanner
         self.inProgressURL = inProgressURL
@@ -34,13 +43,15 @@ final class RecoveryViewModel: ObservableObject {
 
     func refresh() {
         recordings = scanner.scan(excluding: inProgressURL())
+            .filter { !handled.contains($0.url.standardizedFileURL) }
         hasScanned = true
     }
 
     func recover(_ recording: RecoverableRecording) {
         do {
             try RecoveryScanner.recover(recording)
-            refresh()   // a repaired file is no longer unfinalized, so it drops off
+            handled.insert(recording.url.standardizedFileURL)
+            refresh()
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -256,6 +256,34 @@ struct AudioFileRecoveryTests {
         #expect(leftovers.isEmpty)
     }
 
+    // MARK: - Recovered items stop being offered
+
+    /// The regression this guards: M4A repair is intentionally a no-op, so a
+    /// recovered M4A still *detects* as unfinalized. Without an explicit
+    /// handled-set the row would survive its own recovery and the Recover button
+    /// would look broken. Found by manual testing, not by the suite.
+    @Test("A recovered recording stops being listed, even when repair is a no-op")
+    func recoveredItemsDisappear() async throws {
+        let dir = tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let pair = try await makePair(.m4a, in: dir)
+        // Precondition: it really is still unfinalized after "repair".
+        try M4AEncoder.repair(at: pair.crashed)
+        #expect(try M4AEncoder.isUnfinalized(at: pair.crashed) == true)
+
+        let viewModel = RecoveryViewModel(
+            scanner: RecoveryScanner(saveLocation: MockSaveLocationProviding(directory: dir))
+        )
+        viewModel.refresh()
+        let target = try #require(viewModel.recordings.first)
+
+        viewModel.recover(target)
+
+        #expect(viewModel.recordings.isEmpty)
+        #expect(viewModel.errorMessage == nil)
+    }
+
     // MARK: - Format wiring
 
     @Test("Every implemented format has a recovery handler")
