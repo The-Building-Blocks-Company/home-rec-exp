@@ -41,6 +41,24 @@ struct RecorderViewModelTests {
         #expect(viewModel.isRecording == false)
     }
 
+    @Test("The capture source the menu reads is the instance it was given")
+    func captureSourceIsSharedNotDuplicated() {
+        // The menu writes the selection through `viewModel.audioSource`; the
+        // controller reads it at `startRecording`. A second instance would make
+        // that write invisible to the next recording — silent today, because
+        // every read hits UserDefaults and so duplicates agree by accident.
+        // Pin the exposure before BL-111's in-memory cache removes that accident.
+        let shared = MockAudioSourceProviding(selectedSource: .app(bundleID: "com.example.app"))
+        let viewModel = RecorderViewModel(
+            controller: MockRecordingControlling(),
+            permissions: MockPermissionProviding(.granted),
+            clock: ManualClock(),
+            audioSource: shared
+        )
+        #expect(viewModel.audioSource === shared)
+        #expect(viewModel.audioSource.selectedSource == .app(bundleID: "com.example.app"))
+    }
+
     @Test("Re-probing reflects a newly granted permission without relaunch (BL-040)")
     func permissionReprobeUpdatesState() async {
         let permission = MockPermissionProviding(.denied)
@@ -390,5 +408,177 @@ struct RecorderViewModelTests {
         await vm.startRecording()
 
         #expect(controller.lastStartFormat == .m4a)
+    }
+}
+
+// MARK: - The source name shown on both surfaces
+
+@MainActor
+struct CaptureSourceNameTests {
+
+    private func makeViewModel(
+        source: MockAudioSourceProviding
+    ) -> RecorderViewModel {
+        RecorderViewModel(
+            controller: MockRecordingControlling(),
+            permissions: MockPermissionProviding(.granted),
+            clock: ManualClock(),
+            audioSource: source
+        )
+    }
+
+    @Test("A selected app is named, not shown as a bundle identifier")
+    func selectedAppIsNamed() {
+        // Regression: `captureSourceName` read a `knownAppNames` dictionary on
+        // the view model that nothing ever wrote, so this fell through to
+        // `?? bundleID` and the status line read "Ready to record
+        // com.ableton.live" on both surfaces — for the headline feature.
+        let source = MockAudioSourceProviding(selectedSource: .app(bundleID: "com.ableton.live"))
+        source.knownAppNamesResult = ["com.ableton.live": "Ableton Live"]
+        let viewModel = makeViewModel(source: source)
+
+        #expect(viewModel.captureSourceName == "Ableton Live")
+        #expect(viewModel.statusText == "Ready to record Ableton Live")
+    }
+
+    @Test("An app never seen in the picker still renders something usable")
+    func unknownAppFallsBackToBundleID() {
+        // Only reachable for a selection restored from a build that predates the
+        // name memory. Ugly, but naming it wrongly would be worse.
+        let source = MockAudioSourceProviding(selectedSource: .app(bundleID: "com.unknown.app"))
+        let viewModel = makeViewModel(source: source)
+        #expect(viewModel.captureSourceName == "com.unknown.app")
+    }
+
+    @Test("Naming the source performs zero app enumeration")
+    func namingNeverEnumerates() {
+        // Enumeration costs a permission prompt. The status line is evaluated on
+        // every view update, so if it ever enumerated the app would prompt
+        // continuously — the worst possible version of the BL-085 bug.
+        let source = MockAudioSourceProviding(selectedSource: .app(bundleID: "com.ableton.live"))
+        source.knownAppNamesResult = ["com.ableton.live": "Ableton Live"]
+        let viewModel = makeViewModel(source: source)
+
+        _ = viewModel.statusText
+        _ = viewModel.captureSourceName
+        #expect(source.availableAppsCallCount == 0)
+    }
+}
+
+// MARK: - The settings shelf follows the state machine
+
+@MainActor
+struct SettingsShelfVisibilityTests {
+
+    private func makeViewModel() -> RecorderViewModel {
+        RecorderViewModel(
+            controller: MockRecordingControlling(),
+            permissions: MockPermissionProviding(.granted),
+            clock: ManualClock(),
+            audioSource: MockAudioSourceProviding()
+        )
+    }
+
+    @Test("The shelf is shown when idle and hidden while a take is running")
+    func shelfHidesForTheWholeTake() async {
+        let viewModel = makeViewModel()
+        #expect(viewModel.showsSettingsShelf)
+
+        await viewModel.startRecording()
+        #expect(viewModel.state == .recording)
+        #expect(viewModel.showsSettingsShelf == false)
+
+        await viewModel.stopRecording()
+        #expect(viewModel.showsSettingsShelf)
+    }
+
+    @Test("The shelf reappears after a failure so the user can change settings to fix it")
+    func shelfIsAvailableInErrorState() async {
+        let controller = MockRecordingControlling()
+        controller.startError = NSError(domain: "test", code: 1)
+        let viewModel = RecorderViewModel(
+            controller: controller,
+            permissions: MockPermissionProviding(.granted),
+            clock: ManualClock(),
+            audioSource: MockAudioSourceProviding()
+        )
+
+        await viewModel.startRecording()
+        #expect(viewModel.showsSettingsShelf)
+    }
+
+    @Test("The shelf and the capture-source menu are driven by one rule")
+    func shelfAgreesWithMenuSection() {
+        // Was gated on `isRecording`, i.e. `.recording` **only** — so the shelf
+        // stayed visible and clickable through `.starting` and `.stopping`,
+        // offering a format switch for a take whose format was already captured.
+        // Two rules for "settings are locked" is what let them diverge; this
+        // pins that there is now one. The per-state truth table lives in
+        // `CaptureSourceMenuTests.lockMirrorsRecordingState`.
+        #expect(RecordingState.starting.allowsCaptureSourceChange == false)
+        #expect(RecordingState.stopping.allowsCaptureSourceChange == false)
+        #expect(RecordingState.recovering.allowsCaptureSourceChange == false)
+    }
+}
+
+// MARK: - Errors from the v1.1 capture sources say what actually went wrong
+
+@MainActor
+struct CaptureSourceErrorTests {
+
+    @Test("An unavailable source keeps its own copy instead of the generic message")
+    func sourceUnavailableUsesItsOwnCopy() async {
+        // Regression: every non-disk-space failure was flattened into
+        // `.startFailed(error.localizedDescription)`, so a quit app or an
+        // unplugged mic reported "Make sure some audio is playing, then try
+        // again" — advice that cannot work for either cause — and discarded the
+        // accurate copy `AudioSourceError` had already written.
+        let source = MockAudioSourceProviding(selectedSource: .app(bundleID: "com.ableton.live"))
+        source.validateError = AudioSourceError.appNotRunning("com.ableton.live")
+        let controller = RecordingController(
+            captureManager: MockAudioCapturing(),
+            audioRecorder: MockAudioFileWriting(),
+            saveLocation: MockSaveLocationProviding(directory: FileManager.default.temporaryDirectory),
+            audioSource: source
+        )
+        let viewModel = RecorderViewModel(
+            controller: controller,
+            permissions: MockPermissionProviding(.granted),
+            clock: ManualClock(),
+            audioSource: source
+        )
+
+        await viewModel.startRecording()
+
+        #expect(viewModel.state == .error(.sourceUnavailable(.appNotRunning("com.ableton.live"))))
+        let message = try? #require(viewModel.errorMessage)
+        #expect(message?.contains("not currently running") == true)
+        #expect(message?.contains("audio is playing") == false)
+    }
+
+    @Test("An unavailable source does not offer Try again")
+    func sourceUnavailableOffersNoRetry() {
+        // The app is still closed and the mic is still unplugged, so a retry
+        // fails identically. Offering it is a loop dressed as a way out.
+        #expect(RecorderError.sourceUnavailable(.appNotRunning("x")).recovery == nil)
+        #expect(RecorderError.sourceUnavailable(.micNotAvailable("y")).recovery == nil)
+    }
+
+    @Test("Denied microphone access points at Settings, never at Try again")
+    func microphoneDeniedOffersSettings() {
+        // Once denied, `AVCaptureDevice.requestAccess` returns false immediately
+        // and without prompting — so `.tryAgain` here is an infinite loop with a
+        // button on it. Settings is the only real way out.
+        #expect(RecorderError.microphoneDenied.recovery == .openMicrophoneSettings)
+        #expect(RecorderError.microphoneDenied.recovery != .tryAgain)
+        #expect(RecorderError.microphoneDenied.message.contains("microphone"))
+    }
+
+    @Test("Microphone recovery opens the Microphone pane, not Screen Recording")
+    func microphoneRecoveryOpensTheRightPane() {
+        // Sending someone to the wrong System Settings pane is the exact failure
+        // BL-081 existed to fix.
+        #expect(PermissionKind.microphone.settingsAnchor == "Privacy_Microphone")
+        #expect(PermissionKind.screenCapture.settingsAnchor == "Privacy_ScreenCapture")
     }
 }

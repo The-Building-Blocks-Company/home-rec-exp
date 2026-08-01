@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import AVFoundation
 import Combine
 import os
 
@@ -58,6 +59,20 @@ class RecorderViewModel: ObservableObject {
     /// Whether a recording is actively capturing. Derived from `state`.
     var isRecording: Bool { state == .recording }
 
+    /// Whether the settings shelf (save location, format, capture source) is shown.
+    ///
+    /// Gated on the state machine rather than on `isRecording`, which is
+    /// `.recording` **only**. The shelf's own comment claims its settings are
+    /// "locked once capture starts", and with `isRecording` that was false: the
+    /// shelf stayed visible and clickable through `.starting` and `.stopping`,
+    /// after `selectedFormat` had already been captured for the take in flight.
+    /// `.recovering` is not reachable today, but it returns to `.recording`, so
+    /// the same rule keeps the shelf from popping back mid-take if it ever is.
+    ///
+    /// Extracted from the view so the rule is reachable by a test — living inside
+    /// a SwiftUI `if` is why the divergence went unnoticed.
+    var showsSettingsShelf: Bool { state.allowsCaptureSourceChange }
+
     /// Whether the app is actually in a position to record: permission granted and
     /// the bundle in a location where that grant will survive. The record button is
     /// live only in this state; otherwise it carries a corrective action instead.
@@ -88,6 +103,13 @@ class RecorderViewModel: ObservableObject {
     private let permissions: PermissionProviding
     private let clock: DurationClock
     private let saveLocation: SaveLocationProviding
+    /// Capture-source selection, shared with the `RecordingController` that reads it
+    /// at `startRecording`. There must be exactly **one** of these in the app: the
+    /// menu writes the selection and the controller reads it, so a second instance
+    /// would let a picked source be silently ignored by the next recording. Reads
+    /// are `UserDefaults`-backed today and so tolerate duplicates by accident — once
+    /// the selection is cached in memory (BL-111), duplicates diverge for real.
+    let audioSource: AudioSourceProviding
     private var recordingStartTime: Date?
     private var longRecordingWarned = false
     private var activationObserver: NSObjectProtocol?
@@ -151,6 +173,7 @@ class RecorderViewModel: ObservableObject {
         permissions: PermissionProviding? = nil,
         clock: DurationClock? = nil,
         saveLocation: SaveLocationProviding? = nil,
+        audioSource: AudioSourceProviding? = nil,
         installLocation: InstallLocationProviding? = nil,
         defaults: UserDefaults = .standard,
         installNoticePresenter: (() -> Void)? = nil,
@@ -167,7 +190,14 @@ class RecorderViewModel: ObservableObject {
         self.installNoticePresenter = installNoticePresenter
         let resolvedSaveLocation = saveLocation ?? SaveLocationManager(defaults: defaults)
         self.saveLocation = resolvedSaveLocation
-        self.controller = controller ?? RecordingController(saveLocation: resolvedSaveLocation)
+        // Resolved once and handed to the controller, so the menu's writes and the
+        // controller's reads are the same object (see `audioSource` above).
+        let resolvedAudioSource = audioSource ?? AudioSourceManager(defaults: defaults)
+        self.audioSource = resolvedAudioSource
+        self.controller = controller ?? RecordingController(
+            saveLocation: resolvedSaveLocation,
+            audioSource: resolvedAudioSource
+        )
         self.permissions = permissions ?? PermissionManager()
         self.clock = clock ?? SystemDurationClock()
         self.defaults = defaults
@@ -302,6 +332,21 @@ class RecorderViewModel: ObservableObject {
             }
         }
 
+        // Recording a microphone needs its own grant, and it is a *different*
+        // flow rather than the same one parameterised (BL-130): unlike Screen
+        // Recording, macOS will genuinely re-prompt for this, so asking is the
+        // recovery path rather than a one-shot that must never be wasted.
+        //
+        // ⚠️ Requesting this without `NSMicrophoneUsageDescription` in the built
+        // bundle is an immediate TCC *termination*, not a denial. `InfoPlistTests`
+        // asserts the key is in the product for exactly this reason.
+        if case .mic = audioSource.selectedSource {
+            guard await requestMicrophoneAccess() else {
+                transition(to: .error(.microphoneDenied))
+                return
+            }
+        }
+
         transition(to: .starting)
 
         do {
@@ -332,6 +377,14 @@ class RecorderViewModel: ObservableObject {
         } catch RecordingControllerError.insufficientDiskSpace {
             Log.recorder.error("Refusing to record: insufficient disk space")
             transition(to: .error(.diskFull))
+        } catch let sourceError as AudioSourceError {
+            // Caught ahead of the generic clause on purpose. `AudioSourceError`
+            // already writes accurate copy for its two cases — the app quit, the
+            // mic was unplugged — and flattening it into `.startFailed` replaced
+            // that with "make sure some audio is playing", which cannot help with
+            // either. It also offered "Try again", which fails identically.
+            Log.recorder.error("Capture source unavailable: \(sourceError.localizedDescription, privacy: .public)")
+            transition(to: .error(.sourceUnavailable(sourceError)))
         } catch {
             Log.recorder.error("Failed to start recording: \(error.localizedDescription, privacy: .public)")
             transition(to: .error(.startFailed(error.localizedDescription)))
@@ -409,6 +462,50 @@ class RecorderViewModel: ObservableObject {
     /// Order is guide → probe → pane on purpose: the guide is instant, so a slow
     /// or hung probe degrades into "panel is up, carrying its own retry button"
     /// rather than a dead click.
+    /// Ask for microphone access, prompting if macOS still will (BL-130).
+    ///
+    /// Separate from `requestPermission()` on purpose. Screen Recording's prompt
+    /// is one-shot and unrepeatable, which is why BL-081 built a whole guidance
+    /// surface around it; the microphone prompt is re-presentable, so the honest
+    /// flow here is simply to ask.
+    /// - Returns: whether access is granted.
+    func requestMicrophoneAccess() async -> Bool {
+        if permissions.preflight(.microphone) == .granted { return true }
+        return await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
+    /// Change the capture source (BL-111).
+    ///
+    /// The only write path. `objectWillChange` is sent explicitly because the
+    /// selection lives on `AudioSourceManager`, not in a `@Published` property —
+    /// without it the status line would keep naming the previous source until
+    /// some unrelated state change happened to redraw the view.
+    func setCaptureSource(_ source: AudioSource) {
+        guard source != audioSource.selectedSource else { return }
+        objectWillChange.send()
+        audioSource.setSelectedSource(source)
+    }
+
+    /// Human-readable name of the current capture source, for the status line.
+    /// `nil` for all-system-audio, which needs no qualifier.
+    var captureSourceName: String? {
+        switch audioSource.selectedSource {
+        case .systemAll:
+            return nil
+        case .app(let bundleID):
+            // Falls back to the bundle ID only if this app has never been seen
+            // in the picker — which cannot happen for a source the user chose
+            // there, but can for a value restored from a much older build.
+            return audioSource.knownAppName(forBundleID: bundleID) ?? bundleID
+        case .mic(let deviceUID):
+            // Devices are enumerable at any time without a prompt, so unlike an
+            // app name this never has to fall back to a raw identifier in
+            // practice — only if the device was unplugged.
+            return audioSource.availableInputDevices()
+                .first { $0.uid == deviceUID }?.name ?? "Microphone"
+        }
+    }
+
     func openSystemSettings() {
         guard !installLocation.blocksRecording else {
             showInstallLocationNotice()
@@ -670,6 +767,11 @@ class RecorderViewModel: ObservableObject {
         switch suggestion {
         case .openSettings:
             openSystemSettings()
+        case .openMicrophoneSettings:
+            // Straight to the Microphone pane. The screen-capture flow's
+            // registering probe and grant watcher do not apply here: mic access
+            // is re-promptable and its status is live rather than latched.
+            permissions.openSystemPreferences(for: .microphone)
         case .tryAgain:
             Task { await startRecording() }
         case .chooseFolder:
@@ -709,10 +811,21 @@ class RecorderViewModel: ObservableObject {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
-    /// Status text
+    /// Status text.
+    ///
+    /// This line names the capture source, and that is deliberate rather than
+    /// decorative (BL-111). Picking the wrong format is convertible and the wrong
+    /// save location is findable, but recording the wrong *source* means the
+    /// audio you wanted does not exist — there is no undo for a take. It is the
+    /// one setting that earns permanent space on the primary surface.
+    ///
+    /// It is also why "Play something, then hit record" could not simply stay:
+    /// that sentence is itself a source claim, and it is false the moment a
+    /// non-system source is selected.
     var statusText: String {
         switch state {
         case .recording:
+            if let name = captureSourceName { return "Recording \(name)" }
             return "Recording"
         case .starting:
             return "Starting…"
@@ -726,7 +839,12 @@ class RecorderViewModel: ObservableObject {
             // A translocated bundle can't hold a permission grant, so "Almost
             // ready / grant permission" would be a lie — point at the real fix.
             if installLocation.blocksRecording { return "Move to Applications" }
-            return permissionStatus != .granted ? "Almost ready" : "Play something, then hit record"
+            guard permissionStatus == .granted else { return "Almost ready" }
+            // Naming the source here also pre-announces the failure that
+            // `AudioSourceManager.validate()` would otherwise only raise *after*
+            // the user commits to a click.
+            if let name = captureSourceName { return "Ready to record \(name)" }
+            return "Play something, then hit record"
         }
     }
 }

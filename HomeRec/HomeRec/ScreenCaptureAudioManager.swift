@@ -59,6 +59,16 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
     private var audioCallback: ((AVAudioPCMBuffer) -> Void)?
     private var isCapturing = false
 
+    /// Forces every captured buffer to the canonical 48 kHz stereo format the
+    /// encoders are told to expect (BL-112).
+    ///
+    /// ⚠️ One normalizer per sample-handler queue — it holds a stateful
+    /// `AVAudioConverter`, which is declared Sendable but is not safe to drive
+    /// from two queues. This one belongs to the `.audio` handler queue. When
+    /// BL-130 adds a `.microphone` output it must either share that queue or get
+    /// its own normalizer; it must not share this one across queues.
+    private var audioNormalizer = AudioFormatNormalizer()
+
     /// Called when the stream stops unexpectedly. See `AudioCapturing`.
     var onStreamError: (@MainActor (String) -> Void)?
 
@@ -72,6 +82,10 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
     ///   is `.app` and no running app matches its bundle ID.
     func setupCapture(source: AudioSource, audioCallback: @escaping (AVAudioPCMBuffer) -> Void) async throws {
         self.audioCallback = audioCallback
+        // Fresh converter state per session: this manager outlives a single
+        // recording, and a converter carrying the previous take's resampler state
+        // would start the next one mid-phase.
+        self.audioNormalizer = AudioFormatNormalizer()
 
         // Get available displays (and, for .app, running applications)
         let content = try await SCShareableContent.excludingDesktopWindows(
@@ -88,11 +102,26 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
         // Note: ScreenCaptureKit requires video to be captured alongside audio
         let config = SCStreamConfiguration()
 
-        // Audio configuration
-        config.capturesAudio = true
+        // Audio configuration. For a mic source we want *only* the mic: mixing
+        // mic and system audio into one file is a stated non-goal for v1.
+        //
+        // ⚠️ `sampleRate`/`channelCount` govern the `.audio` output ONLY. A
+        // `.microphone` buffer arrives in the device's native format regardless
+        // (SCStream.h), which is exactly why `AudioFormatNormalizer` exists.
+        let isMicSource: Bool
+        if case .mic = source { isMicSource = true } else { isMicSource = false }
+
+        config.capturesAudio = !isMicSource
         config.excludesCurrentProcessAudio = true  // Don't record our own app
         config.sampleRate = 48000  // 48kHz
         config.channelCount = 2    // Stereo
+
+        if case .mic(let deviceUID) = source {
+            config.captureMicrophone = true
+            // "This deviceID is the uniqueID from AVCaptureDevice" (SCStream.h),
+            // which is precisely what `InputDeviceEnumerator` returns.
+            config.microphoneCaptureDeviceID = deviceUID
+        }
 
         // Minimal video configuration (required but we won't use it)
         config.width = 100
@@ -113,6 +142,11 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
                 throw ScreenCaptureAudioError.appNotRunning(bundleID)
             }
             filter = SCContentFilter(display: display, including: [app], exceptingWindows: [])
+        case .mic:
+            // The filter still has to describe *something* capturable — the
+            // stream needs a display for its (unused) video output — but with
+            // `capturesAudio = false` no system audio is recorded from it.
+            filter = SCContentFilter(display: display, excludingWindows: [])
         }
 
         // Create stream
@@ -130,12 +164,22 @@ class ScreenCaptureAudioManager: NSObject, AudioCapturing {
             sampleHandlerQueue: DispatchQueue(label: "com.mdebritto.homerec.screen.capture", qos: .userInitiated)
         )
 
-        // Add audio output
-        try stream.addStreamOutput(
-            self,
-            type: .audio,
-            sampleHandlerQueue: DispatchQueue(label: "com.mdebritto.homerec.audio.capture", qos: .userInitiated)
+        // Add audio output.
+        //
+        // ⚠️ `.audio` and `.microphone` deliberately SHARE one sample-handler
+        // queue. They feed the same `AudioFormatNormalizer`, which holds a
+        // stateful `AVAudioConverter` — declared Sendable but not safe to drive
+        // from two queues, and the compiler will not warn about it. Giving the
+        // mic its own queue would be a silent data race.
+        let audioQueue = DispatchQueue(
+            label: "com.mdebritto.homerec.audio.capture",
+            qos: .userInitiated
         )
+        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
+
+        if isMicSource {
+            try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: audioQueue)
+        }
 
         Log.capture.debug("Capture stream configured (screen + audio handlers added)")
     }
@@ -200,11 +244,20 @@ extension ScreenCaptureAudioManager: SCStreamOutput {
     ) {
         // Ignore video samples (we only need audio). No logging here: this
         // fires per audio buffer on the capture queue — the hot path.
-        guard type == .audio else { return }
+        //
+        // `.microphone` is a distinct output type from `.audio` (BL-130), and
+        // only one of them is ever configured at a time — a mic source sets
+        // `capturesAudio = false`, so no `.audio` buffers arrive to interleave
+        // with it. Both are normalised by the same converter on the same queue.
+        guard type == .audio || type == .microphone else { return }
 
         // Convert at the delegate boundary so every AudioCapturing implementation
-        // hands AudioRecorder the same canonical AVAudioPCMBuffer type (BL-099).
-        guard let pcmBuffer = AudioSampleConverter.makePCMBuffer(from: sampleBuffer) else { return }
-        audioCallback?(pcmBuffer)
+        // hands AudioRecorder the same canonical AVAudioPCMBuffer type (BL-099),
+        // then normalise so it is the same *format* too (BL-112). For system
+        // audio the normaliser is a pass-through — the SCK config already pins
+        // 48 kHz stereo — so the existing path stays byte-identical.
+        guard let pcmBuffer = AudioSampleConverter.makePCMBuffer(from: sampleBuffer),
+              let normalized = audioNormalizer.normalize(pcmBuffer) else { return }
+        audioCallback?(normalized)
     }
 }
