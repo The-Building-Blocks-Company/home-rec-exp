@@ -157,5 +157,95 @@ hdiutil detach "$MOUNT_DIR" >/dev/null
 echo "==> Emitting SHA-256 sidecar…"
 ( cd "$DIST_DIR" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256" )
 
+# ---------------------------------------------------------------------------
+# Sparkle appcast entry (BL-034)
+#
+# Sparkle downloads this same notarized, stapled DMG — it contains
+# "Home Rec.app", which is the name the bundle carries once installed. Feeding
+# it an archive built before the rename above would install a *second*,
+# differently-named copy alongside the original, because Sparkle replaces the
+# bundle at its installed path rather than by identifier.
+# ---------------------------------------------------------------------------
+echo "==> Signing the DMG for Sparkle…"
+
+# `sign_update` ships inside the resolved Sparkle package. Set SPARKLE_BIN to
+# override; otherwise take the copy Xcode has already checked out.
+if [[ -z "${SPARKLE_BIN:-}" ]]; then
+  SPARKLE_BIN="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+    -path "*/artifacts/sparkle/Sparkle/bin/sign_update" -type f 2>/dev/null | head -1)"
+fi
+[[ -x "${SPARKLE_BIN:-}" ]] || {
+  echo "error: sign_update not found. Build once so SPM resolves Sparkle," >&2
+  echo "       or set SPARKLE_BIN=/path/to/sign_update." >&2
+  exit 1
+}
+
+# --- The keypair-identity check ---------------------------------------------
+# The unit suite proves SUPublicEDKey is a well-formed Ed25519 key, but it runs
+# in CI where there is no Keychain, so it cannot prove the key is *ours*. This
+# can, and this is the only place that can.
+#
+# The failure it prevents is silent and permanent: sign the appcast with private
+# key A while the app ships public key B, and every copy of this release rejects
+# every update forever, with the build, the signing and the launch all reporting
+# success. Cheaper to fail here than to strand a release.
+#
+# `-p` only looks up and prints; unlike a bare `generate_keys` it never creates
+# a key, so running it in a build script has no side effects.
+GENERATE_KEYS="${SPARKLE_BIN%/sign_update}/generate_keys"
+if [[ -x "$GENERATE_KEYS" ]]; then
+  echo "==> Verifying the shipped public key matches the signing key…"
+  KEYCHAIN_PUBKEY="$("$GENERATE_KEYS" -p 2>/dev/null | tr -d '[:space:]')"
+  BUNDLE_PUBKEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP/Contents/Info.plist" 2>/dev/null | tr -d '[:space:]')"
+  if [[ -z "$KEYCHAIN_PUBKEY" ]]; then
+    echo "error: no Sparkle private key in the login Keychain. Run generate_keys" >&2
+    echo "       on this Mac, or import it with generate_keys -f." >&2
+    exit 1
+  fi
+  if [[ "$KEYCHAIN_PUBKEY" != "$BUNDLE_PUBKEY" ]]; then
+    echo "error: SUPublicEDKey in the built app does NOT match the private key" >&2
+    echo "       that would sign this release. Shipping this would make every" >&2
+    echo "       update fail verification, permanently, for everyone who" >&2
+    echo "       installs it. Paste this into HomeRec/Info.plist:" >&2
+    echo "         $KEYCHAIN_PUBKEY" >&2
+    echo "       (bundle currently has: ${BUNDLE_PUBKEY:-<missing>})" >&2
+    exit 1
+  fi
+else
+  echo "warning: generate_keys not found — skipping the keypair-identity check." >&2
+  echo "         Confirm by hand that SUPublicEDKey matches your signing key." >&2
+fi
+
+# Reads the EdDSA private key from the login Keychain, where generate_keys put
+# it. It is never written to disk and never enters this repo.
+SIG_ATTRS="$("$SPARKLE_BIN" "$DMG")"
+
+# ⚠️ Version-pinned URL, deliberately NOT the `releases/latest/download/...`
+# form the website uses. An appcast entry is permanent and must keep pointing at
+# the exact file its signature was computed over. Pointed at "latest", every
+# past entry would silently start resolving to a newer DMG, the signature check
+# would fail, and Sparkle would refuse the update with no obvious cause.
+ENCLOSURE_URL="https://github.com/melissa-pereira-deel/home-rec/releases/download/v$VERSION/$(basename "$DMG")"
+APPCAST_ITEM="$DIST_DIR/appcast-item-$VERSION.xml"
+
+cat > "$APPCAST_ITEM" <<ITEM
+    <item>
+      <title>$VERSION</title>
+      <pubDate>$(date -u "+%a, %d %b %Y %H:%M:%S +0000")</pubDate>
+      <sparkle:version>$(defaults read "$APP/Contents/Info" CFBundleVersion)</sparkle:version>
+      <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>$(defaults read "$APP/Contents/Info" LSMinimumSystemVersion)</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/melissa-pereira-deel/home-rec/releases/tag/v$VERSION</sparkle:releaseNotesLink>
+      <enclosure url="$ENCLOSURE_URL" $SIG_ATTRS type="application/octet-stream" />
+    </item>
+ITEM
+
 echo "==> Done: $DMG (v$VERSION)"
 echo "         $(awk '{print $1}' "$DMG.sha256")  sha256"
+echo
+echo "    Sparkle appcast entry written to:"
+echo "      $APPCAST_ITEM"
+echo
+echo "    Order matters: publish the GitHub release for tag v$VERSION FIRST —"
+echo "    the entry's URL points at it — then paste the item into <channel> in"
+echo "    home-rec-site/public/appcast.xml, newest first, and deploy."

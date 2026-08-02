@@ -86,4 +86,72 @@ struct InfoPlistTests {
         // was carried in the dead file for months with no AppleEvents code anywhere.
         #expect(string("NSAppleEventsUsageDescription") == nil)
     }
+
+    /// BL-034 (Sparkle). `SUFeedURL` and `SUPublicEDKey` are third-party keys with
+    /// no `INFOPLIST_KEY_` equivalent — the same allow-list that closed BL-080 as
+    /// impossible. Reaching the product therefore required re-introducing a real
+    /// `INFOPLIST_FILE`, the thing BL-084 deleted.
+    ///
+    /// Both halves are asserted, because the risk was never "does the file get
+    /// read" — it was that setting `INFOPLIST_FILE` might *replace* the generated
+    /// plist rather than merge under it, silently dropping the bundle identifier
+    /// and the deployment floor while the build still succeeded. Measured on
+    /// Xcode 16 / 2026-08-01: with `GENERATE_INFOPLIST_FILE` still YES, Xcode
+    /// merges, and the generated keys survive intact.
+    ///
+    /// The file lives at `HomeRec/Info.plist` — one level *above* the source
+    /// directory on purpose. `HomeRec/HomeRec/` is a file-system-synchronized
+    /// group, so a plist placed there is also copied into `Contents/Resources/`,
+    /// which is exactly the inert second plist BL-084 removed.
+    @Test("Sparkle's feed keys reach the product without displacing generated keys")
+    func sparkleFeedKeysMergeWithGeneratedKeys() throws {
+        let feed = try #require(string("SUFeedURL"), "SUFeedURL absent — INFOPLIST_FILE is not wired in")
+        // Sparkle will refuse a plaintext feed, and an appcast fetched over HTTP
+        // is an update channel anyone on the path can rewrite.
+        #expect(feed.hasPrefix("https://"), "the appcast must be fetched over TLS")
+        #expect(string("SUPublicEDKey")?.isEmpty == false)
+
+        // The merge half. These are generated, not present in `Info.plist`; if
+        // the file had replaced rather than merged, they would be gone.
+        #expect(string("CFBundleIdentifier") == "com.mdebritto.HomeRec")
+        #expect(string("LSMinimumSystemVersion") == "15.0")
+    }
+
+    /// `SUPublicEDKey` must be a real Ed25519 public key in the shipped bundle.
+    ///
+    /// The two halves of the Sparkle keypair are set in different places at
+    /// different times: the private half by `generate_keys` into the login
+    /// Keychain, the public half by hand into `HomeRec/Info.plist`. Only the
+    /// private half has any natural feedback — `sign_update` fails loudly
+    /// without it. A wrong public half fails **silently and permanently**: the
+    /// build succeeds, `sign_update` succeeds, the appcast is signed, the app
+    /// launches, and every copy of that release then rejects every update it is
+    /// ever offered. That is the cohort-stranding failure BL-034 exists to
+    /// prevent, reintroduced by the mechanism meant to fix it.
+    ///
+    /// ⚠️ **What this cannot check:** whether the key is *ours*. A different but
+    /// well-formed Ed25519 key passes everything below. Verifying identity means
+    /// comparing against the private half, and CI has no Keychain and must not
+    /// have one — so that check lives in `scripts/build-dmg.sh`, which runs
+    /// `generate_keys -p` at release time. Structure is guarded here on every
+    /// PR; identity is guarded there on every release. Neither is sufficient
+    /// alone.
+    @Test("The Sparkle public key is a real Ed25519 key, not a placeholder")
+    func sparklePublicKeyIsWellFormed() throws {
+        let key = try #require(string("SUPublicEDKey"), "SUPublicEDKey is missing from the built product")
+
+        #expect(
+            key.localizedCaseInsensitiveContains("placeholder") == false,
+            "SUPublicEDKey is still the spike placeholder. Run Sparkle's generate_keys and paste the real public key into HomeRec/Info.plist — see docs/distribution/sparkle-setup.md."
+        )
+
+        // `Data(base64Encoded:)` rejects invalid characters outright, so a
+        // hand-mangled or half-pasted key fails here rather than at a user's
+        // machine months later.
+        let decoded = try #require(
+            Data(base64Encoded: key),
+            "SUPublicEDKey is not valid base64 — Sparkle refuses to start the updater with an unparseable key."
+        )
+        #expect(decoded.count == 32, "An Ed25519 public key is 32 bytes; this decoded to \(decoded.count).")
+    }
 }

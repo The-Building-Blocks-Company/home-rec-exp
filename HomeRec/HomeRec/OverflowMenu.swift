@@ -137,7 +137,7 @@ enum OverflowMenu {
     /// That is what lets the whole menu — including sections BL-130 and BL-131
     /// will add — be tested without AppKit, a live status item, or permission.
     static func entries(_ context: OverflowContext) -> [OverflowEntry] {
-        captureSourceEntries(context) + appActionEntries
+        captureSourceEntries(context) + appActionEntries(context)
     }
 
     /// The capture-source section, or nothing at all.
@@ -326,8 +326,36 @@ enum OverflowMenu {
     /// `MenuBarController`, which has the view model that owns the navigation.
     static var onRequestPermission: @MainActor () -> Void = {}
 
-    /// The app-level actions — unchanged by BL-111, and always present.
-    static var appActionEntries: [OverflowEntry] {
+    /// Runs a Sparkle update check (BL-034). Set once at startup by
+    /// `MenuBarController`, which owns the updater.
+    ///
+    /// Another entry in the static-closure set TD-010 wants retired. Added here
+    /// rather than inventing a fifth mechanism for one row: `OverflowContext` is
+    /// `Equatable` and so cannot carry a closure, and a singleton updater would
+    /// be worse debt than the pattern already in use.
+    static var onCheckForUpdates: @MainActor () -> Void = {}
+
+    /// Why "Check for Updates…" is greyed, or `nil` when it is live.
+    ///
+    /// A pure function so the precedence between the two independent reasons is
+    /// assertable rather than buried in a ternary inside a row builder.
+    static func updateRowTooltip(_ context: OverflowContext) -> String? {
+        if !context.allowsUpdateInstall {
+            return "Installing an update restarts Home Rec, which would end the recording."
+        }
+        if !context.updaterIsUsable {
+            // Deliberately does not say why — the causes are all misconfigured
+            // builds the user cannot act on. Point at the thing they *can* do.
+            return "Home Rec can't check for updates right now. You can download the latest version from homerec.app."
+        }
+        return nil
+    }
+
+    /// The app-level actions — always present.
+    ///
+    /// Takes the context only for the update row's enabled state. Everything else
+    /// here is context-free and stays that way.
+    static func appActionEntries(_ context: OverflowContext) -> [OverflowEntry] {
         [
             .action(OverflowAction(id: "showWindow", title: "Show Window", perform: showMainWindow)),
             .separator,
@@ -341,6 +369,21 @@ enum OverflowMenu {
             .action(OverflowAction(id: "exportDiagnostics", title: "Export Diagnostics…", perform: Diagnostics.exportReport)),
             .action(OverflowAction(id: "reportProblem", title: "Report a Problem", perform: Diagnostics.reportProblem)),
             .action(OverflowAction(id: "about", title: "About Home Rec", perform: showAbout)),
+            // Greyed rather than hidden while recording — deliberately unlike the
+            // capture-source rows above. Those are *settings*, and the app already
+            // settled that locked settings disappear with the shelf. This is an
+            // app-level action that is permanently present in every other state;
+            // making it vanish mid-take would read as a bug, and the tooltip can
+            // explain a grey row where nothing can explain an absent one.
+            .action(OverflowAction(
+                id: "checkForUpdates",
+                title: "Check for Updates…",
+                // Recording wins the explanation when both apply: it is the one
+                // the user caused and the one that clears on its own.
+                toolTip: updateRowTooltip(context),
+                isEnabled: context.allowsUpdateInstall && context.updaterIsUsable,
+                perform: { onCheckForUpdates() }
+            )),
             .separator,
             .action(OverflowAction(id: "quit", title: "Quit Home Rec", commandKey: "q") {
                 NSApp.terminate(nil)

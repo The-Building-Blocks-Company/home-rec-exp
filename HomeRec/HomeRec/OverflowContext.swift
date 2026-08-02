@@ -54,6 +54,24 @@ struct OverflowContext: Sendable, Equatable {
     /// Remembered name for a selected device that is no longer connected.
     var selectedMicName: String?
 
+    /// Whether an update may be installed right now (BL-034).
+    ///
+    /// Mirrors `RecordingState.allowsUpdateInstall`, and held separately from
+    /// `allowsCaptureSourceChange` for the same reason the two properties are
+    /// separate on the state: they answer different questions and only happen to
+    /// agree today. Folding them here would quietly re-couple what was split
+    /// there.
+    var allowsUpdateInstall: Bool = true
+
+    /// Whether the updater started at all (BL-034).
+    ///
+    /// Separate from `allowsUpdateInstall` because the two are different in
+    /// kind, not just in value: that one is temporary and clears when recording
+    /// stops, this one lasts for the whole process run. They also need different
+    /// copy, and collapsing them would produce a row that blames a recording for
+    /// a misconfigured build.
+    var updaterIsUsable: Bool = true
+
     init(
         selectedSource: AudioSource = .systemAll,
         allowsCaptureSourceChange: Bool = true,
@@ -61,8 +79,11 @@ struct OverflowContext: Sendable, Equatable {
         apps: [RunningAppInfo]? = nil,
         selectedAppName: String? = nil,
         inputDevices: [InputDeviceInfo] = [],
-        selectedMicName: String? = nil
+        selectedMicName: String? = nil,
+        allowsUpdateInstall: Bool = true,
+        updaterIsUsable: Bool = true
     ) {
+        self.updaterIsUsable = updaterIsUsable
         self.selectedSource = selectedSource
         self.allowsCaptureSourceChange = allowsCaptureSourceChange
         self.permissionGranted = permissionGranted
@@ -70,5 +91,6 @@ struct OverflowContext: Sendable, Equatable {
         self.selectedAppName = selectedAppName
         self.inputDevices = inputDevices
         self.selectedMicName = selectedMicName
+        self.allowsUpdateInstall = allowsUpdateInstall
     }
 }
