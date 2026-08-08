@@ -4,15 +4,27 @@
 //
 //  App-owned. Supplies the sample data the vendored `#Preview` blocks reference.
 //
-//  Upstream keeps this data `internal` to the GlassKit package specifically so it
-//  "can never ship in a release build". Vendoring dissolves that module boundary —
-//  a single-module app has nothing for `internal` to hide behind — so `#if DEBUG`
-//  is what restores the guarantee. That is also why this is a fresh file rather
-//  than a copy of upstream's: the vendored set stays byte-identical and diffable,
-//  and the fake data stays out of the product.
+//  ⚠️ NOT `#if DEBUG`, and the reason is the whole point of this file.
 //
-
-#if DEBUG
+//  It was, at first. Upstream keeps this data `internal` to the GlassKit package
+//  precisely so it "can never ship in a release build", and `#if DEBUG` looked
+//  like the way to restore that guarantee once vendoring dissolved the module
+//  boundary. It does not work: `#Preview` is a macro that expands into ordinary
+//  code in *every* configuration, so a Release build still compiles the vendored
+//  previews and still needs the symbols they reference. Under `#if DEBUG` the
+//  fixtures disappear and the archive fails with "cannot find
+//  'GlassSampleWaveforms' in scope" — which is exactly how it was found, on the
+//  first Release build anyone ran, after the tag had already been cut.
+//
+//  So the choice is: ship a few hundred bytes of obviously-synthetic floats, or
+//  patch the vendored file to delete its previews. Shipping the floats is the
+//  cheaper of the two — it keeps `Vendor/` byte-identical, which is the property
+//  the whole vendoring arrangement rests on, and the preview scaffolding is
+//  compiled into Release either way.
+//
+//  Nothing here is reachable from the app: no shipping code path calls it, and
+//  the only references are the vendored `#Preview` blocks.
+//
 
 import Foundation
 
@@ -65,5 +77,3 @@ private struct SplitMix64 {
         Double(next() >> 11) / Double(1 << 53)
     }
 }
-
-#endif

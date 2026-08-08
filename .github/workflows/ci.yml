@@ -81,6 +81,26 @@ jobs:
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO
 
+      - name: Release build
+        # BLOCKING gate. Everything above is a Debug build, and Release is not
+        # the same compilation: whole-module, x86_64 as well as arm64, and
+        # `#if DEBUG` code is gone from it.
+        #
+        # That last difference shipped a defect. A `#Preview` in a vendored file
+        # referenced fixtures guarded by `#if DEBUG`; every Debug build and the
+        # whole test suite passed, and the archive failed with "cannot find
+        # 'GlassSampleWaveforms' in scope" — found by hand, mid-release, after
+        # the tag had been cut. A green suite said nothing about whether the
+        # product could be built at all.
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project HomeRec/HomeRec.xcodeproj \
+            -scheme HomeRec \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
