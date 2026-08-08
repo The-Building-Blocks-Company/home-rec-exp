@@ -1,6 +1,6 @@
 # The Glass design system, as Home Rec ships it
 
-How the app's visual language works after the v1.2.0 reskin: where each value
+How the app's visual language works after the v1.1.0 reskin: where each value
 comes from, and — because they carry the least obvious decisions — exactly how
 the **background colour** and the **glass effect** are built.
 

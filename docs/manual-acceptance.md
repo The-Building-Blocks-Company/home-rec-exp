@@ -111,7 +111,7 @@ update to this one.
       *(known open defect: the menu pops at the pointer location rather than
       under the button)*
 
-## The reskin (v1.2.0) — every state, seen once
+## The reskin (v1.1.0) — every state, seen once
 
 No UI test asserts anything visual, so a reskin regression cannot fail CI — and
 the states below are exactly the ones the run log shows never get exercised.

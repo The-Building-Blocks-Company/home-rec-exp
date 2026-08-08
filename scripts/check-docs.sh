@@ -91,11 +91,24 @@ echo
 # --- things the docs must NOT claim any more ---------------------------------
 echo "Rot guards:"
 
-for ghost in DebugLogger.swift; do
+# Every doc that names source files, not just CLAUDE.md. The README carried
+# `DebugLogger.swift` in its project tree for months while this guard reported
+# "no references to deleted DebugLogger.swift" — it was only ever looking at one
+# file. A guard that checks a subset of the places a claim can rot is worse than
+# none, because it reports success.
+GHOST_DOCS="CLAUDE.md README.md"
+
+for ghost in DebugLogger.swift WaveformView.swift ShelfMenu.swift; do
   if [ -f "HomeRec/HomeRec/$ghost" ]; then
     note "$ghost exists"
-  elif grep -q "$ghost" CLAUDE.md 2>/dev/null; then
-    bad "CLAUDE.md still references $ghost, which does not exist"
+    continue
+  fi
+  found=""
+  for doc in $GHOST_DOCS; do
+    grep -q "$ghost" "$doc" 2>/dev/null && found="$found $doc"
+  done
+  if [ -n "$found" ]; then
+    bad "$ghost does not exist, but is still referenced in:$found"
   else
     ok "No references to deleted $ghost"
   fi

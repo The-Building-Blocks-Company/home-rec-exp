@@ -29,8 +29,9 @@ Home Rec is a lightweight macOS app that captures system audio output and saves 
 - **Pick what you record** — Capture everything your Mac plays, or a **single app**, or a **microphone**. Choose from the Capture Source section of the menu bar menu; the choice is remembered between launches, and the status line names it so you can see what you're about to capture. The app list shows only apps that actually have audio, so it stays short.
 - **Microphone input** — Record from the built-in mic, a USB interface, or any input device macOS exposes, under the names macOS gives them. Whatever sample rate and channel count the device uses is converted to Home Rec's canonical format, so a 44.1 kHz or mono mic records at the correct pitch and speed.
 - **Lossless WAV, FLAC + M4A export** — 48 kHz / 16-bit stereo PCM out of the box; FLAC when you want lossless at roughly 0.6× the size (and 24-bit); AAC at 44.1 kHz / 256 kbps when you want smaller still. MP3 on the roadmap.
-- **Live waveform feedback** — Real-time amplitude visualization in both the main window and the menu bar popover. You always know the signal is good.
+- **Live waveform feedback** — Real-time level, as bars, in both the main window and the menu bar popover. Drawn on a decibel scale rather than a linear one, so ordinary speech and music visibly register instead of sitting flat near the baseline. You always know the signal is good.
 - **Menu bar popover** — Persistent menu bar icon with compact controls. Record, stop, reveal in Finder without switching windows.
+- **One dark, glass interface** — The window is a single sheet of glass over your desktop, with no title bar, and the brand, format and settings collected in a header. **Home Rec does not follow your Mac's light or dark setting: it is always dark.** That is deliberate and there is no light version planned. Your menu bar, the menu-bar icon, and the menus that drop out of it are untouched and still follow your system.
 - **Background recording** — Close the main window, keep recording from the menu bar. App stays alive until you Quit.
 - **Choose where recordings go** — Configurable save location (defaults to Desktop). Falls back gracefully if the chosen folder disappears.
 - **Stream-failure recovery** — If macOS revokes capture mid-recording (permission flipped off, display sleep, another app grabs the device), Home Rec detects it, transitions to an error state, and **finalizes the partial WAV** so audio captured before the failure is preserved.
@@ -147,6 +148,11 @@ Home Rec needs **Screen Recording** permission to capture system audio. The firs
                   │  shared @EnvironmentObject
           ┌───────▼────────┐
           │ RecorderViewModel│  ← waveformSamples, isRecording, duration
+                    │
+          ┌─────────▼────────┐
+          │RecorderWaveform  │  ← signed samples → 0…1 magnitudes (dB scale)
+          │    Adapter       │
+          └──────────────────┘
           │   (@MainActor)  │
           └───────┬────────┘
                   │
@@ -176,11 +182,14 @@ Home Rec needs **Screen Recording** permission to capture system audio. The firs
 
 | Component | Responsibility |
 |-----------|---------------|
-| **RecorderView** | SwiftUI interface with app logo, waveform, controls |
+| **RecorderView** | SwiftUI interface: brand header, status, waveform, controls |
 | **MenuBarPopoverView** | Compact menu bar popover with waveform and controls |
 | **MenuBarController** | NSStatusItem + NSPopover management, icon state |
-| **AppDelegate** | Keeps app alive on window close |
-| **WaveformView** | SwiftUI Shape rendering live audio amplitude |
+| **AppDelegate** | Keeps app alive on window close; pins the dark appearance |
+| **DesignSystem/** | Vendored GlassKit tokens and primitives, plus app-owned adapters |
+| **GlassWindowGround** | The glass ground every surface shares (behind-window blur + tint) |
+| **RecorderWaveformAdapter** | Signed samples → 0…1 bar magnitudes, on a decibel scale |
+| **SettingsPopover** | Recording format and save location, from the header |
 | **RecorderViewModel** | UI state management, waveform sample publishing |
 | **RecordingController** | Orchestrates recording workflow, wires callbacks |
 | **ScreenCaptureAudioManager** | Manages ScreenCaptureKit stream lifecycle |
@@ -236,17 +245,29 @@ Home Rec/
     │   ├── MenuBarController.swift
     │   ├── MenuBarPopoverView.swift
     │   ├── RecorderView.swift
-    │   ├── WaveformView.swift
     │   ├── RecorderViewModel.swift
     │   ├── RecordingController.swift
     │   ├── ScreenCaptureAudioManager.swift
     │   ├── AudioRecorder.swift
+    │   ├── AudioFormatNormalizer.swift
+    │   ├── WaveformDownsampler.swift
     │   ├── WAVWriter.swift
     │   ├── PermissionManager.swift
-    │   └── DebugLogger.swift
+    │   ├── UpdaterController.swift
+    │   ├── RecoveryView.swift
+    │   ├── …                          # ~48 files in total
+    │   └── DesignSystem/
+    │       ├── Vendor/                # GlassKit, byte-identical to upstream
+    │       ├── Adapters/              # app-owned glue
+    │       └── DesignSystemProvenance.swift
     ├── HomeRecTests/
     └── HomeRecUITests/
 ```
+
+The design system is vendored rather than depended on, and the copy is checked
+mechanically — see [`docs/design-system-vendoring.md`](docs/design-system-vendoring.md)
+for the rules, and [`docs/design-system.md`](docs/design-system.md) for the
+visual language itself.
 
 ## Development
 
