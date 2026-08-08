@@ -57,20 +57,26 @@ struct MenuBarPopoverView: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     if let recovery = viewModel.recoverySuggestion {
-                        Button(recovery.label) {
+                        GlassPillButton(
+                            recovery.label,
+                            emphasis: .secondary,
+                            size: .mini
+                        ) {
                             viewModel.performRecovery()
                         }
-                        .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
                     }
                 }
             }
 
             // Mini waveform (only while recording)
             if viewModel.isRecording {
-                WaveformView(samples: viewModel.waveformSamples)
-                    .stroke(Color.red.opacity(0.7), lineWidth: 1.5)
-                    .frame(height: 36)
-                    .animation(.easeOut(duration: 0.1), value: viewModel.waveformSamples)
+                GlassLiveWaveform(
+                    samples: RecorderWaveformAdapter.magnitudes(
+                        viewModel.waveformSamples,
+                        bucketedTo: RecorderWaveformAdapter.popoverBarCount
+                    )
+                )
+                .frame(height: 36)
             }
 
             // Primary action. A red "Start recording" on an app that cannot record
@@ -90,38 +96,29 @@ struct MenuBarPopoverView: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Button(action: {
+                // The neutral fill is what the system accent was standing in for
+                // here: primary rank without borrowing the record red for an
+                // action that cannot record.
+                GlassPillButton(
+                    "Reveal in Finder",
+                    emphasis: .primaryNeutral,
+                    size: .medium,
+                    isFullWidth: true
+                ) {
                     viewModel.revealAppInFinder()
-                }) {
-                    Text("Reveal in Finder")
-                        .font(.custom("Archivo", size: 13, relativeTo: .body))
-                        .fontWeight(.medium)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .foregroundColor(.white)
-                        .background(Color.accentColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                .buttonStyle(.plain)
             } else {
-                Button(action: {
+                GlassPillButton(
+                    viewModel.isRecording ? "Stop recording" : "Start recording",
+                    systemImage: viewModel.isRecording ? "stop.circle.fill" : "record.circle",
+                    emphasis: .primary,
+                    size: .medium,
+                    isFullWidth: true
+                ) {
                     Task {
                         await viewModel.toggleRecording()
                     }
-                }) {
-                    HStack {
-                        Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
-                        Text(viewModel.isRecording ? "Stop recording" : "Start recording")
-                            .font(.custom("Archivo", size: 13, relativeTo: .body))
-                            .fontWeight(.medium)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .foregroundColor(.white)
-                    .background(Color.red)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                .buttonStyle(.plain)
             }
 
             // Last recording info. Hidden while blocked: its "Reveal" targets the
@@ -142,22 +139,25 @@ struct MenuBarPopoverView: View {
 
                     Spacer()
 
-                    Button("Reveal") {
+                    GlassPillButton(
+                        "Reveal",
+                        emphasis: .tertiary,
+                        size: .mini
+                    ) {
                         viewModel.revealInFinder()
                     }
-                    .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                    )
-                    .buttonStyle(.plain)
                 }
             }
 
         }
         .padding(16)
         .frame(width: 280)
+        // The same ground as the window, deliberately. This was a flat opaque
+        // fill first, reasoning that an NSPopover already draws its own vibrancy
+        // and a second material would read as mud. What an opaque fill actually
+        // does is *cover* that vibrancy, so the popover came out visibly darker
+        // than the window it belongs to — the app looking like two apps.
+        .background(GlassWindowGround())
+        .glassThemeAdaptingToContrast()
     }
 }

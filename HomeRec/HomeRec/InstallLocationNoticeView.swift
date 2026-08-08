@@ -30,13 +30,27 @@ struct InstallLocationNoticeView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack {
-                Button("Reveal in Finder", action: onReveal)
+                GlassPillButton(
+                    "Reveal in Finder",
+                    emphasis: .primaryNeutral,
+                    size: .small,
+                    action: onReveal
+                )
                 Spacer()
-                Button("Close", action: onDismiss)
+                GlassPillButton(
+                    "Close",
+                    emphasis: .tertiary,
+                    size: .small,
+                    action: onDismiss
+                )
             }
-            .font(.custom("Inter-Regular", size: 12, relativeTo: .caption))
         }
         .padding(18)
         .frame(width: 340)
+        // Same ground as every other surface. Still not a glass *panel* — this
+        // sits inside a titled NSPanel, and a rounded card here would put a
+        // second set of corners inside the panel's own square ones.
+        .background(GlassWindowGround())
+        .glassThemeAdaptingToContrast()
     }
 }
