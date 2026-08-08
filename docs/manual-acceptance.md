@@ -78,22 +78,49 @@ real force-quit is a claim, not a fact.
 
 ⚠️ **Nothing in the suite can reach this.** Building an `SPUUpdater` touches the
 network, so the tests assert only the recording interlock rule. Whether an
-update actually *installs* is provable one way: install the previous version and
-update to this one.
+update actually *installs* has to be watched.
+
+> ⚠️ **"N-1 → N" was impossible for 1.1.0, and the checklist claimed otherwise.**
+> Sparkle landed *in* 1.1.0 (`bcb2554`). v1.0.2 has zero Sparkle references — no
+> **Check for Updates…**, no updater to run — so "install the previous version
+> and update to this one" could never be performed for that release. It read as
+> a pending check rather than an inapplicable one, which is worse: a box nobody
+> could ever tick looks the same as a box nobody got to.
+>
+> Two consequences that outlive this release. Everyone on 1.0/1.0.1/1.0.2 is
+> **permanently stranded** — no shipped build of theirs can be told a new one
+> exists. And the appcast entry for 1.1.0 changes nothing for them; it exists so
+> that people who install 1.1.0 are offered 1.1.1.
+>
+> **The first hop that can actually be tested is N → N+1**, from the first
+> version that has an updater. Rehearse it against a staging feed before it is
+> real — see below.
 
 - [ ] `https://homerec.app/appcast.xml` responds 200, as XML, on a machine that
       has never loaded it (a stale CDN entry hides a broken deploy)
-- [ ] **N-1 → N end to end.** Install the previous DMG into `/Applications`,
-      launch it, **Check for Updates…**, let it install
-- [ ] It relaunches as N, **at the same path**, still named `Home Rec.app` —
+- [ ] The published appcast entry's `enclosure url` resolves 302 → 200 and its
+      `length` matches the asset's real byte count
+      *(a signature is verified against bytes; a wrong length fails late and
+      confusingly)*
+
+**N → N+1, rehearsed against a staging feed.** Everything here runs locally,
+offers nothing to any user, and is the only way to see the update path work
+before it matters:
+
+- [ ] Build a scratch **N+1** (version bumped, signed, notarized, `sign_update`d)
+- [ ] Serve a staging appcast on `127.0.0.1` containing only that entry
+- [ ] Build a scratch **N** whose `SUFeedURL` points at the staging feed, with an
+      ATS exception for localhost, and install it to `/Applications`
+- [ ] **Check for Updates…** finds N+1, verifies, downloads and installs it
+- [ ] It relaunches as N+1, **at the same path**, still named `Home Rec.app` —
       a second differently-named copy in `/Applications` is the failure this
       catches
 - [ ] Screen Recording and Microphone permissions **survived** the update
       (TCC keys on the designated requirement, so a signing change silently
       revokes the grant)
-- [ ] Tamper check: point a scratch build at an appcast entry whose
-      `edSignature` has one character changed — Sparkle must **refuse** it. A
-      signature check nobody has seen reject anything is not known to work.
+- [ ] Tamper check: change one character of the staging entry's `edSignature`
+      — Sparkle must **refuse** it. A signature check nobody has seen reject
+      anything is not known to work.
 
 **The interlock, which is the part that can lose someone's take:**
 
