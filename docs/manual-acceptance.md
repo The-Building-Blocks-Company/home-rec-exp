@@ -102,6 +102,11 @@ update actually *installs* has to be watched.
       `length` matches the asset's real byte count
       *(a signature is verified against bytes; a wrong length fails late and
       confusingly)*
+- [ ] The entry's `edSignature` verifies against the **published** asset, not a
+      local copy of it. Re-sign the downloaded file: Ed25519 is deterministic,
+      so the same bytes and key reproduce the same signature exactly, and
+      anything else means the entry describes a different build. Cheap, and the
+      failure it catches is a rebuilt DMG at an unchanged version.
 
 **N → N+1, rehearsed against a staging feed.** Everything here runs locally,
 offers nothing to any user, and is the only way to see the update path work
@@ -121,6 +126,24 @@ before it matters:
 - [ ] Tamper check: change one character of the staging entry's `edSignature`
       — Sparkle must **refuse** it. A signature check nobody has seen reject
       anything is not known to work.
+
+> ⚠️ **Installing the scratch N anywhere but `/Applications` silently voids two
+> of those checks.** Putting it in `~/Desktop` protects the real install, which
+> is tempting and was done once — but same-path relaunch is then unobservable,
+> and TCC keys on signature **and path**, so a bundle elsewhere holds its own
+> grant no matter what happens to the one in `/Applications`. The update will
+> install and the run will look complete. Either accept that the real install
+> gets updated, or record those two as not run.
+
+> ⚠️ **The tamper check only means something if the signature is the *sole*
+> defect.** Serve a genuine, correctly signed payload with a correct `length`
+> and a `sparkle:version` that really is newer, then change one character
+> *within* the base64 alphabet so it still decodes to 64 bytes. A garbled
+> string is the easier test and the weaker one: it can fail at the parser and
+> never reach the verifier. Confirm from the feed's access log that the **whole
+> payload downloaded** before the refusal, and that the error names the
+> signature rather than the network or the disk image — otherwise something
+> else stopped it and the verifier is still unobserved.
 
 **The interlock, which is the part that can lose someone's take:**
 
@@ -206,6 +229,69 @@ is the failure mode this file exists to prevent.
 
 Newest first. Record what was checked, what was *not*, and by what means — a run
 that doesn't say what it skipped is indistinguishable from a complete one.
+
+## v1.1.0 — auto-update path, 2026-08-10 · `cd56bf0`
+
+**The update path is now proven in both directions: it installs a correctly
+signed update, and it refuses a mismatched one.** The appcast, empty since it
+was created, now announces v1.1.0. What remains of this block is the two checks
+the rehearsal's one deliberate substitution put out of reach, plus the interlock.
+
+### Passed — by a person at the machine
+
+| Check | Notes |
+|---|---|
+| **N → N+1 install** | 1.1.0 → 1.1.1 against a `127.0.0.1` feed. Offered, release notes rendered, downloaded, installed |
+| **Tamper check — Sparkle refused** | *"The update is improperly signed and could not be validated."* |
+
+### Passed — mechanically
+
+| Check | Evidence |
+|---|---|
+| Appcast reachable, as XML | `HTTP 200`, `application/xml; charset=utf-8`, `must-revalidate`; live file byte-identical to the commit |
+| Enclosure resolves, length agrees | `200`, `content-length: 2666422` = entry `length` = asset size |
+| Published signature matches published bytes | sha256 `2932b2dd…` matches the release sidecar, **and** re-signing the downloaded asset reproduced `8UQC1+hL…` exactly |
+
+### Why the tamper result is worth trusting
+
+A refusal only means something if the signature was the **sole** defect —
+otherwise Sparkle may have stopped for an unrelated reason and the verifier is
+still unobserved. So everything else was made genuine:
+
+- The payload served was the **real published v1.1.0 DMG**, sha256-verified
+  against the release sidecar. Correctly signed, notarized, stapled.
+- `length` was correct, and `sparkle:version` (10100) exceeded the running
+  app's (10009), so version comparison offered it normally.
+- The flipped character stayed **inside the base64 alphabet** and still decoded
+  to 64 bytes. A garbled string would have been the easier test and the weaker
+  one: it could fail at the parser and never reach the verifier.
+
+And the failure landed in the right place. The access log shows the app fetched
+the feed, then downloaded the **full 2,666,422-byte payload**, and only then
+refused — the verifier ran on real bytes rather than bailing out early. The
+bundle on disk was still 1.0.9 / build 10009 afterwards, and the error names the
+cause rather than blaming the network or the disk image.
+
+### What this run did *not* establish
+
+- **Both proofs used a local feed with a local enclosure.** The live appcast
+  points at GitHub. Signature and URL are each verified independently, so the
+  residual risk is narrow — the GitHub download path specifically — but no
+  client has yet consumed the real feed with a real entry in it. The first user
+  update closes this; nothing cheaper does.
+- **The two `/Applications` checks above.** The rehearsal ran from `~/Desktop`
+  to protect the shipping install, which is also precisely why it cannot speak
+  to same-path relaunch or TCC survival.
+- **The interlock is untouched** and remains the highest-risk item here, because
+  it is the one that can cost someone a take.
+
+### A local preference was changed and not changed back
+
+`SUAutomaticallyUpdate` is now `0` for `com.mdebritto.HomeRec`, set so the
+refusal would surface as a dialog instead of failing silently in a background
+install. It was unset beforehand, so this is a choice rather than a
+restoration, and preferences key on bundle ID — it applies to the real install
+too. `defaults delete com.mdebritto.HomeRec SUAutomaticallyUpdate` reverts it.
 
 ## v1.1.0 — partial, 2026-08-07 · `53bb672`
 
