@@ -37,6 +37,19 @@ struct MenuBarPopoverView: View {
                     .font(.custom("Archivo", size: 17, relativeTo: .headline))
                     .fontWeight(.medium)
                     .foregroundColor(viewModel.isRecording ? .red : .primary)
+                    // Wrap rather than truncate. At 17pt there are 248pt to work
+                    // with here (280 less the 16pt padding), and the idle line
+                    // "Play something, then hit record" is wider than that — it
+                    // shipped reading "…then hit rec…", which looks like a
+                    // rendering bug rather than a sentence.
+                    //
+                    // Not fixed by shortening that one string: `statusText` also
+                    // returns "Recording <source>" and "Ready to record
+                    // <source>", and a source can be any app name the user
+                    // happens to be capturing. Any single-line treatment is one
+                    // long app name away from the same ellipsis, so the row has
+                    // to be able to take a second line.
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer()
 
